@@ -1,0 +1,12 @@
+# Secret files - NEVER upload to GitHub
+.env
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Node modules (if you ever use them)
+node_modules/
