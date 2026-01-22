@@ -221,11 +221,8 @@
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### STEP 6: FETCH PROFILE DATA + REELS ONLY
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 6: FETCH PROFILE DATA + REELS/VIDEOS ONLY                          │
+─────────────────────────────────────────────────────────────────────────┐
+│ ### STEP 6: FETCH PROFILE DATA + REELS/VIDEOS ONLY                          │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
@@ -241,10 +238,18 @@
 │  │  │                                                             │  │  │
 │  │  │  THEN IN N8N - Code Node:                                   │  │  │
 │  │  │  • Filter: ONLY type="Video" or type="Reel"                 │  │  │
+│  │  │  • Filter: duration >= 15 seconds                           │  │  │
+│  │  │  • Filter: duration <= 90 seconds                           │  │  │
 │  │  │  • Remove all images/carousels                              │  │  │
-│  │  │  • If < 3 videos/reels → Skip the profile                   │  │  │
+│  │  │  • If < 3 qualifying videos → Skip the profile              │  │  │
 │  │  │                                                             │  │  │
-│  │  │  80 profiles → ~50 with enough videos                       │  │  │
+│  │  │  WHY 15-90 SECONDS?                                         │  │  │
+│  │  │  • < 15 sec = transitions, music clips, memes               │  │  │
+│  │  │  • 15-60 sec = talking head, quick tips ✓                   │  │  │
+│  │  │  • 60-90 sec = tutorials, explanations ✓                    │  │  │
+│  │  │  • > 90 sec = long-form (less common for UGC)               │  │  │
+│  │  │                                                             │  │  │
+│  │  │  80 profiles → ~50 with enough qualifying videos            │  │  │
 │  │  └────────────────────────────────────────────────────────────┘  │  │
 │  │                                                                   │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
@@ -275,6 +280,39 @@
 │  └──────────────────────────────────────────────────────────────────┘  │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
+```
+---
+
+## N8N Code Snippets
+
+### Duration Filter Code (Step 6)
+```javascript
+// Filter for reels with "talking" duration (15-90 seconds)
+const reels = items.filter(item => {
+  const duration = item.json.videoDuration || 0;
+  const type = item.json.type;
+  
+  return (
+    (type === 'Video' || type === 'Reel') &&
+    duration >= 15 &&
+    duration <= 90
+  );
+});
+
+// Skip profile if less than 3 qualifying reels
+if (reels.length < 3) {
+  return []; // Skip this profile
+}
+
+// Sort by engagement (likes + comments)
+reels.sort((a, b) => {
+  const engagementA = (a.json.likesCount || 0) + (a.json.commentsCount || 0);
+  const engagementB = (b.json.likesCount || 0) + (b.json.commentsCount || 0);
+  return engagementB - engagementA;
+});
+
+// Return top 3
+return reels.slice(0, 3);
 ```
 
 ### STEP 8: CLAUDE ANALYZES UGC ABILITY
@@ -376,29 +414,27 @@
 │  │                                                                   │  │
 │  │  GOOGLE SHEETS: Add row for each                                 │  │
 │  │                                                                   │  │
-│  │  Columns:                                                         │  │
-│  │  ┌────────────────────────────────────────────────────────────┐  │  │
-│  │  │ A: Handle (@username)                                       │  │  │
-│  │  │ B: Followers                                                │  │  │
-│  │  │ C: Engagement %                                             │  │  │
-│  │  │ D: UGC Score (overall)                                      │  │  │
-│  │  │ E: Voice Score                                              │  │  │
-│  │  │ F: Camera Score                                             │  │  │
-│  │  │ G: Energy Score                                             │  │  │
-│  │  │ H: Style (Tutorial/Review/Entertainment/Inspiration)        │  │  │
-│  │  │ I: English (YES/NO)                                         │  │  │
-│  │  │ J: Source (which competitor)                                │  │  │
-│  │  │ K: Top Video 1 (clickable link)                             │  │  │
-│  │  │ L: Top Video 2 (clickable link)                             │  │  │
-│  │  │ M: Top Video 3 (clickable link)                             │  │  │
-│  │  │ N: Claude's Notes                                           │  │  │
-│  │  │ O: Priority (PRIORITY or normal)                            │  │  │
-│  │  │ P: Status (empty - you fill in)                             │  │  │
-│  │  │ Q: Date Added                                               │  │  │
-│  │  └────────────────────────────────────────────────────────────┘  │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
+│  Columns:                                                         │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │ A: Handle (@username)                                       │  │
+│  │ B: Followers                                                │  │
+│  │ C: Engagement %                                             │  │
+│  │ D: UGC Score (overall)                                      │  │
+│  │ E: Voice Score                                              │  │
+│  │ F: Camera Score                                             │  │
+│  │ G: Energy Score                                             │  │
+│  │ H: Style (Tutorial/Review/Entertainment/Inspiration)        │  │
+│  │ I: English (YES/NO)                                         │  │
+│  │ J: Avg Video Duration (sec)  ← NEW                          │  │
+│  │ K: Source (which competitor)                                │  │
+│  │ L: Top Video 1 (clickable link)                             │  │
+│  │ M: Top Video 2 (clickable link)                             │  │
+│  │ N: Top Video 3 (clickable link)                             │  │
+│  │ O: Claude's Notes                                           │  │
+│  │ P: Priority (PRIORITY or normal)                            │  │
+│  │ Q: Status (empty - you fill in)                             │  │
+│  │ R: Date Added                                               │  │
+│  └────────────────────────────────────────────────────────────┘  │
 ```
 
 ---
@@ -763,3 +799,15 @@ node_modules/
 *Last updated: January 2026*
 *Project: UGC Finder for 21Draw*
 *Method: Competitor Tagging*
+---
+
+## Changelog
+
+### v1.1 - January 2026
+- Added video duration filter (15-90 seconds) to Step 6
+- Added N8N code snippets section
+- Added "Avg Video Duration" column to Google Sheets output
+- Rationale: Videos under 15 sec are typically music/transitions, not talking content
+
+### v1.0 - January 2026
+- Initial documentation
