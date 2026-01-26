@@ -1,0 +1,528 @@
+{
+  "name": "UGC Finder v2 - Phase 1 Fixed",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "64f128e2-5849-45a6-a448-7c411e85c451",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-1200, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ====== UGC FINDER SETTINGS v2 ======\n// Last updated: 2026-01-26\n\n// COMPETITORS TO SCRAPE (tagged posts)\nconst COMPETITORS = [\n  'prokotv',           // Proko - anatomy/figure drawing\n  'marcbrunet',        // Marc Brunet - digital art\n  'sinixdesign',       // Sinix - painting/rendering\n  'ethanmbecker',      // Ethan Becker - animation\n  'rossdraws'          // Ross Tran - illustration\n];\n\n// LIMITS\nconst POSTS_PER_COMPETITOR = 10;  // Tagged posts per competitor\nconst MIN_FOLLOWERS = 5000;\nconst MAX_FOLLOWERS = 100000;\nconst MIN_REELS_REQUIRED = 3;     // Minimum qualifying video reels\n\n// REEL FILTERS\nconst MIN_REEL_DURATION = 15;     // seconds\nconst MAX_REEL_DURATION = 90;     // seconds\n\n// PHASE 2 (disabled by default - run separately)\nconst RUN_PHASE_2 = false;\nconst SIMILAR_LIMIT = 30;\n\n// ======================\n\nreturn [{\n  json: {\n    competitors: COMPETITORS,\n    postsPerCompetitor: POSTS_PER_COMPETITOR,\n    minFollowers: MIN_FOLLOWERS,\n    maxFollowers: MAX_FOLLOWERS,\n    minReelsRequired: MIN_REELS_REQUIRED,\n    minReelDuration: MIN_REEL_DURATION,\n    maxReelDuration: MAX_REEL_DURATION,\n    runPhase2: RUN_PHASE_2,\n    similarLimit: SIMILAR_LIMIT,\n    runDate: new Date().toISOString().split('T')[0]\n  }\n}];"
+      },
+      "id": "880e4822-eca3-4268-95f8-16e6d9ae0b6d",
+      "name": "Settings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1000, 400],
+      "notesInFlow": true,
+      "notes": "⚙️ Edit settings here - multiple competitors supported"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Convert competitors array to individual items for looping\nconst settings = $input.first().json;\nreturn settings.competitors.map(c => ({ json: { competitor: c, ...settings } }));"
+      },
+      "id": "prep-competitors-001",
+      "name": "Prep Competitors",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-800, 400]
+    },
+    {
+      "parameters": {
+        "options": {
+          "batchSize": 1
+        }
+      },
+      "id": "loop-competitors-001",
+      "name": "Loop Competitors",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [-600, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/apify~instagram-post-scraper/run-sync-get-dataset-items",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "apifyApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"directUrls\": [\"https://www.instagram.com/{{ $json.competitor }}/tagged/\"],\n  \"resultsLimit\": {{ $json.postsPerCompetitor }},\n  \"resultsType\": \"posts\"\n}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "24fb4728-31ce-4d72-b6b2-e13e9b2375f1",
+      "name": "Apify: Tagged Posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-400, 300],
+      "credentials": {
+        "apifyApi": {
+          "id": "UXM2kDAyAdkPfO2Q",
+          "name": "Apify account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notesInFlow": true,
+      "notes": "✅ Using instagram-post-scraper (more reliable)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract unique profiles from tagged posts\nconst posts = $input.all().map(i => i.json);\nconst currentCompetitor = $('Loop Competitors').item.json.competitor;\nconst settings = $('Settings').first().json;\nconst unique = new Map();\n\nfor (const p of posts) {\n  // Handle different response structures\n  const u = p.ownerUsername || p.username;\n  if (!u || unique.has(u)) continue;\n  \n  // Skip if it's the competitor's own account\n  if (u === currentCompetitor) continue;\n  \n  // Get follower count if available (for pre-filtering)\n  const followers = p.ownerFollowersCount || p.followersCount || null;\n  \n  // Pre-filter by followers if we have the data\n  if (followers !== null) {\n    if (followers < settings.minFollowers || followers > settings.maxFollowers) {\n      continue; // Skip - outside follower range\n    }\n  }\n  \n  unique.set(u, {\n    username: u,\n    followers_hint: followers,\n    source: currentCompetitor,\n    sourceType: 'competitor_tagged',\n    found_at: new Date().toISOString()\n  });\n}\n\nconst profiles = Array.from(unique.values());\nconsole.log(`Found ${profiles.length} unique profiles from @${currentCompetitor}`);\n\nreturn profiles.map(p => ({ json: p }));"
+      },
+      "id": "e2b4122d-091d-4432-a090-a142ca1ffb30",
+      "name": "Extract Profiles",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect profiles from this competitor batch\nreturn $input.all();"
+      },
+      "id": "collect-batch-001",
+      "name": "Collect Batch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "allProfiles",
+        "options": {}
+      },
+      "id": "aggregate-all-001",
+      "name": "Aggregate All",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [0, 500],
+      "notesInFlow": true,
+      "notes": "Collects profiles from all competitors"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Deduplicate profiles across all competitors\nconst data = $input.first().json;\nconst allProfiles = data.allProfiles || [];\nconst unique = new Map();\n\nfor (const p of allProfiles) {\n  if (!p.username) continue;\n  if (!unique.has(p.username)) {\n    unique.set(p.username, p);\n  }\n}\n\nconst deduped = Array.from(unique.values());\nconsole.log(`Total unique profiles after deduplication: ${deduped.length}`);\n\nreturn deduped.map(p => ({ json: p }));"
+      },
+      "id": "dedupe-profiles-001",
+      "name": "Dedupe Profiles",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 500]
+    },
+    {
+      "parameters": {
+        "options": {
+          "batchSize": 1
+        }
+      },
+      "id": "16e56d52-8a75-4c66-b9b5-bac844fe0a11",
+      "name": "Phase 1 Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [400, 500],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "tableId": "profiles",
+        "filterType": "string",
+        "filterString": "=username=eq.{{ $json.username }}"
+      },
+      "id": "d91a88a7-eafb-42c2-ae75-149b0636d0f8",
+      "name": "Check DB",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [600, 400],
+      "credentials": {
+        "supabaseApi": {
+          "id": "AK4efiLBvVR50hXA",
+          "name": "Supabase account"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "✅ Fixed: Using 'select' operation"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "new",
+              "leftValue": "={{ $input.all().length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "bd45dc78-41ce-4c20-8968-8eb1e247cf20",
+      "name": "New?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [800, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/apify~instagram-post-scraper/run-sync-get-dataset-items",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "apifyApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"directUrls\": [\"https://www.instagram.com/{{ $('Phase 1 Loop').item.json.username }}/\"],\n  \"resultsLimit\": 30,\n  \"skipPinnedPosts\": false\n}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "99173fea-b630-4e78-b0e7-64644dded86e",
+      "name": "Apify: Profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 300],
+      "credentials": {
+        "apifyApi": {
+          "id": "UXM2kDAyAdkPfO2Q",
+          "name": "Apify account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Enhanced Filter Reels with engagement calculation\nconst data = $input.first().json;\nconst posts = data.latestPosts || data.posts || [];\nconst profile = $('Phase 1 Loop').item.json;\nconst settings = $('Settings').first().json;\n\n// Get profile data\nconst followers = data.followersCount || profile.followers_hint || 0;\nconst bio = data.biography || '';\n\n// Check follower range\nif (followers < settings.minFollowers || followers > settings.maxFollowers) {\n  // Log why filtered and return empty\n  console.log(`FILTERED: @${profile.username} - ${followers} followers (outside ${settings.minFollowers}-${settings.maxFollowers} range)`);\n  return [];\n}\n\n// Filter for qualifying video reels\nconst reels = posts.filter(p => {\n  const dur = p.videoDuration || 0;\n  const type = (p.type || p.productType || '').toLowerCase();\n  const isVideo = type.includes('video') || type.includes('reel') || type.includes('clip');\n  return isVideo && dur >= settings.minReelDuration && dur <= settings.maxReelDuration;\n});\n\n// Check minimum reels requirement\nif (reels.length < settings.minReelsRequired) {\n  console.log(`FILTERED: @${profile.username} - Only ${reels.length} qualifying reels (need ${settings.minReelsRequired}+)`);\n  return [];\n}\n\n// Sort by engagement (likes + comments weighted)\nreels.sort((a, b) => {\n  const engA = (a.likesCount || 0) + (a.commentsCount || 0) * 2;\n  const engB = (b.likesCount || 0) + (b.commentsCount || 0) * 2;\n  return engB - engA;\n});\n\n// Calculate engagement rate\nconst top5 = reels.slice(0, 5);\nconst avgLikes = top5.reduce((s, r) => s + (r.likesCount || 0), 0) / top5.length;\nconst avgComments = top5.reduce((s, r) => s + (r.commentsCount || 0), 0) / top5.length;\nconst engagementRate = followers > 0 ? ((avgLikes / followers) * 100) : 0;\n\n// Extract hashtags for content analysis\nconst allHashtags = [];\nfor (const r of reels.slice(0, 5)) {\n  const caption = r.caption || '';\n  const tags = caption.match(/#\\w+/g) || [];\n  allHashtags.push(...tags.map(t => t.toLowerCase()));\n}\nconst uniqueHashtags = [...new Set(allHashtags)];\n\n// Check for art-related content\nconst artKeywords = ['art', 'artist', 'drawing', 'sketch', 'illustration', 'paint', 'digital', 'procreate', 'photoshop', 'tutorial', 'timelapse'];\nconst hasArtContent = uniqueHashtags.some(tag => artKeywords.some(kw => tag.includes(kw)));\n\n// Get top 3 reels\nconst top3 = reels.slice(0, 3);\n\nreturn [{\n  json: {\n    // Profile info\n    username: profile.username,\n    followers: followers,\n    bio: bio.substring(0, 500),\n    source: profile.source,\n    source_type: profile.sourceType,\n    \n    // Engagement metrics\n    engagement_rate: Math.round(engagementRate * 100) / 100,\n    avg_likes: Math.round(avgLikes),\n    avg_comments: Math.round(avgComments),\n    total_qualifying_reels: reels.length,\n    \n    // Content analysis\n    has_art_content: hasArtContent,\n    top_hashtags: uniqueHashtags.slice(0, 15).join(', '),\n    \n    // Top 3 reels\n    reel_1_url: top3[0].url || `https://instagram.com/reel/${top3[0].shortCode}`,\n    reel_1_likes: top3[0].likesCount || 0,\n    reel_1_comments: top3[0].commentsCount || 0,\n    reel_1_duration: top3[0].videoDuration || 0,\n    reel_1_caption: (top3[0].caption || '').substring(0, 400),\n    \n    reel_2_url: top3[1].url || `https://instagram.com/reel/${top3[1].shortCode}`,\n    reel_2_likes: top3[1].likesCount || 0,\n    reel_2_comments: top3[1].commentsCount || 0,\n    reel_2_duration: top3[1].videoDuration || 0,\n    reel_2_caption: (top3[1].caption || '').substring(0, 400),\n    \n    reel_3_url: top3[2].url || `https://instagram.com/reel/${top3[2].shortCode}`,\n    reel_3_likes: top3[2].likesCount || 0,\n    reel_3_comments: top3[2].commentsCount || 0,\n    reel_3_duration: top3[2].videoDuration || 0,\n    reel_3_caption: (top3[2].caption || '').substring(0, 400),\n    \n    // Metadata\n    avg_duration: Math.round(top3.reduce((s, r) => s + (r.videoDuration || 0), 0) / 3),\n    analyzed_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "113171a4-175c-4513-8ba0-c4274268b47c",
+      "name": "Filter Reels",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 300],
+      "notesInFlow": true,
+      "notes": "✅ Enhanced: engagement rate, hashtags, pre-filtering"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 1024,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"# UGC CREATOR PROFILE EVALUATION FOR 21DRAW\\n\\nYou are evaluating Instagram creators as potential UGC partners for 21Draw, an art education company.\\n\\n## IMPORTANT LIMITATIONS\\nYou can ONLY analyze text data. You CANNOT watch videos, hear audio, or see images.\\nDo NOT guess about voice quality, speaking ability, or camera presence - these require manual video review.\\n\\n## Profile Data:\\n- Username: @{{ $json.username }}\\n- Followers: {{ $json.followers }}\\n- Bio: {{ $json.bio }}\\n- Engagement Rate: {{ $json.engagement_rate }}%\\n- Avg Likes: {{ $json.avg_likes }} | Avg Comments: {{ $json.avg_comments }}\\n- Has Art Content: {{ $json.has_art_content }}\\n- Top Hashtags: {{ $json.top_hashtags }}\\n- Source: Found via {{ $json.source_type }} on @{{ $json.source }}\\n\\n## Top 3 Video Reels (captions only - you cannot watch these):\\n\\n### Reel 1: {{ $json.reel_1_url }}\\n- Engagement: {{ $json.reel_1_likes }} likes, {{ $json.reel_1_comments }} comments\\n- Duration: {{ $json.reel_1_duration }}s\\n- Caption: {{ $json.reel_1_caption }}\\n\\n### Reel 2: {{ $json.reel_2_url }}\\n- Engagement: {{ $json.reel_2_likes }} likes, {{ $json.reel_2_comments }} comments\\n- Duration: {{ $json.reel_2_duration }}s\\n- Caption: {{ $json.reel_2_caption }}\\n\\n### Reel 3: {{ $json.reel_3_url }}\\n- Engagement: {{ $json.reel_3_likes }} likes, {{ $json.reel_3_comments }} comments\\n- Duration: {{ $json.reel_3_duration }}s\\n- Caption: {{ $json.reel_3_caption }}\\n\\n## EVALUATE (based on available text data only):\\n\\n### A. Niche Relevance (1-10)\\nHow relevant is this creator to art/illustration/digital art education?\\nLook at: bio keywords, hashtags, caption themes\\n\\n### B. Engagement Quality (1-10)\\nIs engagement healthy for this follower range?\\n- 5K-20K followers: 4-10% is good\\n- 20K-50K followers: 2-6% is good\\n- 50K-100K followers: 1-4% is good\\n\\n### C. Content Consistency (1-10)\\nDo captions suggest regular, educational content?\\nLook for: tutorials, tips, process descriptions\\n\\n### D. Audience Fit (1-10)\\nWould this audience be interested in learning art?\\n\\n### E. Red Flags (list any found):\\n- Promotes competing courses/platforms\\n- Engagement seems fake (very high or suspiciously uniform)\\n- Controversial/inappropriate content hints\\n- Inactive indicators\\n- Non-English content only\\n\\n### F. Recommendation:\\n- REVIEW_PRIORITY: High relevance (8+), good engagement, educational content, no red flags\\n- REVIEW: Decent signals (6+), worth manual video check\\n- SKIP: Poor niche fit, red flags, or low engagement\\n\\n## RESPOND WITH JSON ONLY (no markdown, no explanation):\\n{\\\"niche_relevance\\\": 8, \\\"engagement_quality\\\": 7, \\\"content_consistency\\\": 7, \\\"audience_fit\\\": 8, \\\"profile_score\\\": 7.5, \\\"red_flags\\\": [], \\\"content_themes\\\": [\\\"digital art\\\", \\\"tutorials\\\"], \\\"likely_speaks_in_videos\\\": \\\"unknown - requires manual review\\\", \\\"recommendation\\\": \\\"REVIEW_PRIORITY\\\", \\\"reasoning\\\": \\\"Strong art education niche with 4.2% engagement. Bio mentions teaching. Captions show tutorial-style content.\\\", \\\"manual_review_notes\\\": \\\"Check if creator speaks clearly in videos and assess production quality\\\"}\"\n  }]\n}",
+        "options": {}
+      },
+      "id": "da2f969b-0293-4c60-9cd0-f4239a6a711a",
+      "name": "Claude Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1400, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "anthropic-header-auth",
+          "name": "Anthropic API Key"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "✅ Fixed: Honest prompt about limitations"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge profile data with Claude analysis\nconst profile = $('Filter Reels').item.json;\nconst claudeResponse = $input.first().json;\n\nlet analysis = {};\ntry {\n  // Handle potential markdown code blocks in response\n  let text = claudeResponse.content?.[0]?.text || '{}';\n  text = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  analysis = JSON.parse(text);\n} catch (e) {\n  console.log('Claude parse error:', e.message);\n  analysis = {\n    recommendation: 'REVIEW',\n    reasoning: 'Could not parse AI analysis - manual review needed',\n    profile_score: 5,\n    red_flags: ['AI_PARSE_ERROR']\n  };\n}\n\n// Build final record\nconst record = {\n  // Profile data\n  username: profile.username,\n  followers: profile.followers,\n  bio: profile.bio,\n  source: profile.source,\n  source_type: profile.source_type,\n  \n  // Engagement metrics\n  engagement_rate: profile.engagement_rate,\n  avg_likes: profile.avg_likes,\n  avg_comments: profile.avg_comments,\n  total_qualifying_reels: profile.total_qualifying_reels,\n  \n  // Content analysis\n  has_art_content: profile.has_art_content,\n  top_hashtags: profile.top_hashtags,\n  \n  // Reel URLs\n  reel_1_url: profile.reel_1_url,\n  reel_1_likes: profile.reel_1_likes,\n  reel_2_url: profile.reel_2_url,\n  reel_2_likes: profile.reel_2_likes,\n  reel_3_url: profile.reel_3_url,\n  reel_3_likes: profile.reel_3_likes,\n  \n  // AI Analysis scores\n  niche_relevance: analysis.niche_relevance || 5,\n  engagement_quality: analysis.engagement_quality || 5,\n  content_consistency: analysis.content_consistency || 5,\n  audience_fit: analysis.audience_fit || 5,\n  profile_score: analysis.profile_score || 5,\n  \n  // AI Analysis text\n  content_themes: Array.isArray(analysis.content_themes) ? analysis.content_themes.join(', ') : '',\n  recommendation: analysis.recommendation || 'REVIEW',\n  reasoning: analysis.reasoning || '',\n  red_flags: Array.isArray(analysis.red_flags) ? analysis.red_flags : [],\n  manual_review_notes: analysis.manual_review_notes || 'Review videos for speaking ability and production quality',\n  \n  // Status tracking\n  status: 'PENDING_REVIEW',\n  avg_duration: profile.avg_duration,\n  analyzed_at: profile.analyzed_at\n};\n\nreturn [{ json: record }];"
+      },
+      "id": "2c42c2d3-5fb2-43c5-b8da-987ff4a0e7ae",
+      "name": "Merge",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1600, 300],
+      "notesInFlow": true,
+      "notes": "✅ Enhanced: better error handling, all fields mapped"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "profiles",
+        "dataToSend": "autoMapInputData"
+      },
+      "id": "90553b98-3b6e-4f17-9184-81ca04e07818",
+      "name": "Save DB",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1800, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "AK4efiLBvVR50hXA",
+          "name": "Supabase account"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "✅ Fixed: ENABLED + auto-map fields"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "p",
+              "leftValue": "={{ $json.recommendation }}",
+              "rightValue": "REVIEW_PRIORITY",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "c",
+              "leftValue": "={{ $json.recommendation }}",
+              "rightValue": "REVIEW",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "ef5ed900-d5c5-4857-8a45-7ba5cf0688a7",
+      "name": "Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2000, 300],
+      "notesInFlow": true,
+      "notes": "Routes REVIEW_PRIORITY and REVIEW to Sheets"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1HqsIaxnz3elGDOAd4njxkUkFqF-OBljY-bkYWMtdWvM",
+          "mode": "list",
+          "cachedResultName": "21Draw UGC Candidates",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HqsIaxnz3elGDOAd4njxkUkFqF-OBljY-bkYWMtdWvM/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1HqsIaxnz3elGDOAd4njxkUkFqF-OBljY-bkYWMtdWvM/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Handle": "={{ $json.username }}",
+            "Followers": "={{ $json.followers }}",
+            "Engagement %": "={{ $json.engagement_rate }}",
+            "Profile Score": "={{ $json.profile_score }}",
+            "Niche Score": "={{ $json.niche_relevance }}",
+            "Engagement Score": "={{ $json.engagement_quality }}",
+            "Style": "={{ $json.content_themes }}",
+            "Art Content": "={{ $json.has_art_content }}",
+            "Avg Duration": "={{ $json.avg_duration }}",
+            "Source": "={{ $json.source }}",
+            "Top Video 1": "={{ $json.reel_1_url }}",
+            "Top Video 2": "={{ $json.reel_2_url }}",
+            "Top Video 3": "={{ $json.reel_3_url }}",
+            "AI Notes": "={{ $json.reasoning }}",
+            "Review Notes": "={{ $json.manual_review_notes }}",
+            "Priority": "={{ $json.recommendation }}",
+            "Status": "=PENDING_REVIEW",
+            "Date Added": "={{ $json.analyzed_at }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {"id": "Handle", "displayName": "Handle", "type": "string"},
+            {"id": "Followers", "displayName": "Followers", "type": "string"},
+            {"id": "Engagement %", "displayName": "Engagement %", "type": "string"},
+            {"id": "Profile Score", "displayName": "Profile Score", "type": "string"},
+            {"id": "Niche Score", "displayName": "Niche Score", "type": "string"},
+            {"id": "Engagement Score", "displayName": "Engagement Score", "type": "string"},
+            {"id": "Style", "displayName": "Style", "type": "string"},
+            {"id": "Art Content", "displayName": "Art Content", "type": "string"},
+            {"id": "Avg Duration", "displayName": "Avg Duration", "type": "string"},
+            {"id": "Source", "displayName": "Source", "type": "string"},
+            {"id": "Top Video 1", "displayName": "Top Video 1", "type": "string"},
+            {"id": "Top Video 2", "displayName": "Top Video 2", "type": "string"},
+            {"id": "Top Video 3", "displayName": "Top Video 3", "type": "string"},
+            {"id": "AI Notes", "displayName": "AI Notes", "type": "string"},
+            {"id": "Review Notes", "displayName": "Review Notes", "type": "string"},
+            {"id": "Priority", "displayName": "Priority", "type": "string"},
+            {"id": "Status", "displayName": "Status", "type": "string"},
+            {"id": "Date Added", "displayName": "Date Added", "type": "string"}
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "2eaa0457-286c-4453-bed8-38307e0db0fe",
+      "name": "Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2200, 200],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "VPNtyUhpYNjAijIt",
+          "name": "Google Sheets account 2"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "✅ Fixed: All columns mapped"
+    },
+    {
+      "parameters": {},
+      "id": "f294b08c-ecb5-4fc7-8adb-917911b870c7",
+      "name": "Skip",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2200, 400]
+    },
+    {
+      "parameters": {},
+      "id": "6acfb799-23a4-4316-bea9-dd6a4e27bca2",
+      "name": "Exists",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1000, 500]
+    },
+    {
+      "parameters": {},
+      "id": "done-001",
+      "name": "Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [600, 600],
+      "notesInFlow": true,
+      "notes": "✅ Phase 1 Complete!"
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [[{"node": "Settings", "type": "main", "index": 0}]]
+    },
+    "Settings": {
+      "main": [[{"node": "Prep Competitors", "type": "main", "index": 0}]]
+    },
+    "Prep Competitors": {
+      "main": [[{"node": "Loop Competitors", "type": "main", "index": 0}]]
+    },
+    "Loop Competitors": {
+      "main": [
+        [{"node": "Apify: Tagged Posts", "type": "main", "index": 0}],
+        [{"node": "Aggregate All", "type": "main", "index": 0}]
+      ]
+    },
+    "Apify: Tagged Posts": {
+      "main": [[{"node": "Extract Profiles", "type": "main", "index": 0}]]
+    },
+    "Extract Profiles": {
+      "main": [[{"node": "Collect Batch", "type": "main", "index": 0}]]
+    },
+    "Collect Batch": {
+      "main": [[{"node": "Loop Competitors", "type": "main", "index": 0}]]
+    },
+    "Aggregate All": {
+      "main": [[{"node": "Dedupe Profiles", "type": "main", "index": 0}]]
+    },
+    "Dedupe Profiles": {
+      "main": [[{"node": "Phase 1 Loop", "type": "main", "index": 0}]]
+    },
+    "Phase 1 Loop": {
+      "main": [
+        [{"node": "Check DB", "type": "main", "index": 0}],
+        [{"node": "Done", "type": "main", "index": 0}]
+      ]
+    },
+    "Check DB": {
+      "main": [[{"node": "New?", "type": "main", "index": 0}]]
+    },
+    "New?": {
+      "main": [
+        [{"node": "Apify: Profile", "type": "main", "index": 0}],
+        [{"node": "Exists", "type": "main", "index": 0}]
+      ]
+    },
+    "Apify: Profile": {
+      "main": [[{"node": "Filter Reels", "type": "main", "index": 0}]]
+    },
+    "Filter Reels": {
+      "main": [[{"node": "Claude Analysis", "type": "main", "index": 0}]]
+    },
+    "Claude Analysis": {
+      "main": [[{"node": "Merge", "type": "main", "index": 0}]]
+    },
+    "Merge": {
+      "main": [[{"node": "Save DB", "type": "main", "index": 0}]]
+    },
+    "Save DB": {
+      "main": [[{"node": "Approved?", "type": "main", "index": 0}]]
+    },
+    "Approved?": {
+      "main": [
+        [{"node": "Sheets", "type": "main", "index": 0}],
+        [{"node": "Skip", "type": "main", "index": 0}]
+      ]
+    },
+    "Sheets": {
+      "main": [[{"node": "Phase 1 Loop", "type": "main", "index": 0}]]
+    },
+    "Skip": {
+      "main": [[{"node": "Phase 1 Loop", "type": "main", "index": 0}]]
+    },
+    "Exists": {
+      "main": [[{"node": "Phase 1 Loop", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "v2-fixed-2026-01-26",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [
+    {"name": "UGC"},
+    {"name": "Instagram"},
+    {"name": "21Draw"},
+    {"name": "Phase-1-Only"}
+  ]
+}
