@@ -1,813 +1,516 @@
-# UGC Finder for 21Draw - Complete Project Documentation
+# UGC Finder for 21Draw — Complete Project Documentation
 
-## Project Overview
+### v1.1 — February 2026
+
+---
+
+## Overview
+
+Automated Instagram creator discovery pipeline for 21Draw (online art education platform). Scrapes competitor-tagged posts, fetches full creator profiles via Apify, analyzes them with Claude AI, and stores approved UGC candidates in Supabase + Google Sheets.
+
+**Goal:** Find art creators who are a good fit for UGC partnerships with 21Draw by analyzing their Instagram presence, engagement metrics, and reel content.
+
+---
+
+## Architecture
 
 ```
-╔═══════════════════════════════════════════════════════════════════════════╗
-║                                                                           ║
-║              UGC FINDER FOR 21DRAW                                        ║
-║              Method: Competitor Tagging                                   ║
-║                                                                           ║
-╠═══════════════════════════════════════════════════════════════════════════╣
-║                                                                           ║
-║  GOAL:                                                                    ║
-║  Find 20-50 quality UGC creators who can create content for 21Draw       ║
-║                                                                           ║
-║  METHOD:                                                                  ║
-║  Scrape profiles that have already created UGC for similar companies     ║
-║  (Skillshare, Domestika, etc)                                            ║
-║                                                                           ║
-║  OUTPUT:                                                                  ║
-║  Google Sheet with:                                                       ║
-║  • Handle                                                                 ║
-║  • UGC Score                                                              ║
-║  • Top 3 Reels (clickable links)                                         ║
-║  • Claude's assessment                                                    ║
-║                                                                           ║
-╚═══════════════════════════════════════════════════════════════════════════╝
+Start → Settings1 → Apify: Tagged Posts → Extract Profiles1 → Collect Batch
+    → Aggregate All (logging)
+    → Dedupe Profiles → Run an Actor and get dataset (Apify Profile Scraper)
+        → Check DB (Supabase) → New?
+            → [New] Filter Reels → Claude Analysis → Merge → Save DB → Approved? → Sheets1
+            → [Exists] → Done
+            → [New, not approved] → Skip
 ```
 
 ---
 
-## N8N Workflow Architecture
+## Node-by-Node Reference
 
+### Start
+Manual trigger to run the workflow.
+
+### Settings1
+Configuration node. Sets competitor usernames to scrape (e.g., `prokotv`).
+
+### Apify: Tagged Posts
+**Type:** HTTP Request (POST)
+**What it does:** Calls Apify Instagram scraper to find posts tagged by competitor accounts.
+**Output:** ~30 tagged posts with basic user info.
+
+### Extract Profiles1
+**Type:** Code
+**What it does:** Extracts unique Instagram usernames from tagged posts.
+
+### Collect Batch
+**Type:** Code
+**What it does:** Groups extracted profiles into batches for processing.
+
+### Aggregate All
+**Type:** Aggregate
+**What it does:** Collects all profiles from all competitors into a single array for logging/tracking.
+
+### Dedupe Profiles
+**Type:** Code
+**What it does:** Removes duplicate usernames (same creator tagged by multiple competitors). Deduplicates on `username` field.
+
+### Run an Actor and get dataset
+**Type:** HTTP Request (POST to Apify)
+**What it does:** Fetches full Instagram profile data for each unique creator using Apify's Instagram Profile Scraper.
+
+**Important configuration:**
+```json
+{"usernames": ["{{ $json.username }}"], "resultsLimit": 30}
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                                                                         │
-│  MANUAL TRIGGER                                                         │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                                                                         │
-│  SELECT METHOD (dropdown in N8N)                                        │
-│                                                                         │
-│  ○ Competitor Tagging (recommended)                                     │
-│  ○ Similar Accounts                                                     │
-│  ○ Agency Followers                                                     │
-│  ○ Hashtags                                                             │
-│  ○ All methods                                                          │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                    ┌───────────────┼───────────────┐
-                    ▼               ▼               ▼
-            ┌───────────┐   ┌───────────┐   ┌───────────┐
-            │ APIFY:    │   │ APIFY:    │   │ APIFY:    │
-            │ Tagged    │   │ Similar   │   │ Hashtag   │
-            │ Posts     │   │ Accounts  │   │ Scraper   │
-            └───────────┘   └───────────┘   └───────────┘
-                    │               │               │
-                    └───────────────┼───────────────┘
-                                    │
-                                    ▼
-                          ┌─────────────────┐
-                          │  MERGE +        │
-                          │  REMOVE DUPES   │
-                          └─────────────────┘
-                                    │
-                                    ▼
-                          ┌─────────────────┐
-                          │  FILTER +       │
-                          │  FETCH REELS +  │
-                          │  CLAUDE ANALYSIS│
-                          └─────────────────┘
-                                    │
-                                    ▼
-                          ┌─────────────────┐
-                          │  GOOGLE SHEETS  │
-                          └─────────────────┘
-```
+The `resultsLimit: 30` is critical — without it, Apify only returns profile metadata (no posts/reels). With it, the response includes the `latestPosts` array containing up to 30 recent posts with engagement data.
 
----
-
-## STEP 1: Define Competitors to Scrape
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                                                                         │
-│  COMPETITORS TO SCRAPE                                                  │
-│                                                                         │
-│  Tier 1: Direct competitors (course platforms)                          │
-│  ─────────────────────────────────────────────────────────────────────  │
-│  │ @skillshare          │ Largest - lots of UGC                      │  │
-│  │ @domestikisglobal    │ Creative courses - relevant audience       │  │
-│  │ @proko               │ Art-specific - perfect match               │  │
-│  │ @schoolism           │ Digital art - exact target audience        │  │
-│  │ @cubebrush           │ Digital art marketplace                    │  │
-│  ─────────────────────────────────────────────────────────────────────  │
-│                                                                         │
-│  Tier 2: Related brands (creative tools)                                │
-│  ─────────────────────────────────────────────────────────────────────  │
-│  │ @procreate           │ Tool many artists use                      │  │
-│  │ @clipstudiopaint     │ Another popular tool                       │  │
-│  │ @adobe               │ Large - but relevant content               │  │
-│  │ @wacom               │ Hardware for digital art                   │  │
-│  ─────────────────────────────────────────────────────────────────────  │
-│                                                                         │
-│  Tier 3: General learning platforms                                     │
-│  ─────────────────────────────────────────────────────────────────────  │
-│  │ @udemy               │ Large - filter for creative content        │  │
-│  │ @creativelive        │ Creative courses                           │  │
-│  │ @masterclass         │ Premium - high-quality creators            │  │
-│  ─────────────────────────────────────────────────────────────────────  │
-│                                                                         │
-│  RECOMMENDATION: Start with Tier 1 (5 accounts)                         │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## STEP 2: Complete Workflow (10 Steps)
-
-### STEP 1: TRIGGER
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 1: TRIGGER                                                         │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌──────────────┐                                                       │
-│  │   MANUAL     │  ← You click "Execute" when you want to run          │
-│  │   TRIGGER    │                                                       │
-│  └──────────────┘                                                       │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### STEP 2: FETCH MOST POPULAR TAGGED POSTS
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 2: FETCH MOST POPULAR TAGGED POSTS                                 │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │  APIFY: Instagram Tagged Posts Scraper                           │  │
-│  │                                                                   │  │
-│  │  Settings:                                                        │  │
-│  │  • username: "@skillshare" (and other competitors)               │  │
-│  │  • resultsLimit: 100                                              │  │
-│  │  • sortBy: "popular"  ← MOST POPULAR FIRST                       │  │
-│  │                                                                   │  │
-│  │  Output: 500 posts (100 per competitor × 5 competitors)          │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### STEP 3: EXTRACT UNIQUE PROFILES
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 3: EXTRACT UNIQUE PROFILES                                         │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │  N8N: Code Node                                                   │  │
-│  │                                                                   │  │
-│  │  • Take all 500 posts                                             │  │
-│  │  • Extract unique usernames                                       │  │
-│  │  • Remove duplicates                                              │  │
-│  │                                                                   │  │
-│  │  500 posts → ~300 unique profiles                                │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### STEP 4: CHECK AGAINST DATABASE (avoid re-scraping)
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 4: CHECK AGAINST DATABASE (avoid re-scraping)                      │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │  SUPABASE: Check duplicates                                       │  │
-│  │                                                                   │  │
-│  │  For each profile:                                                │  │
-│  │  "Does @username already exist in our database?"                 │  │
-│  │                                                                   │  │
-│  │  • YES → Skip (save Apify credits)                               │  │
-│  │  • NO → Continue                                                  │  │
-│  │                                                                   │  │
-│  │  300 profiles → ~250 new ones                                    │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### STEP 5: BASIC FILTER
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 5: BASIC FILTER                                                    │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │  N8N: IF Node                                                     │  │
-│  │                                                                   │  │
-│  │  Keep only profiles where:                                        │  │
-│  │  • followers >= 5,000                                             │  │
-│  │  • followers <= 100,000                                           │  │
-│  │  • engagement_rate >= 2%                                          │  │
-│  │                                                                   │  │
-│  │  250 profiles → ~80 remaining                                    │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-─────────────────────────────────────────────────────────────────────────┐
-│ ### STEP 6: FETCH PROFILE DATA + REELS/VIDEOS ONLY                          │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │  LOOP: For each profile that passed the filter                   │  │
-│  │                                                                   │  │
-│  │  ┌────────────────────────────────────────────────────────────┐  │  │
-│  │  │  APIFY: Instagram Profile Scraper                          │  │  │
-│  │  │                                                             │  │  │
-│  │  │  Settings:                                                  │  │  │
-│  │  │  • username: the profile                                    │  │  │
-│  │  │  • resultsType: "posts"                                     │  │  │
-│  │  │  • resultsLimit: 30                                         │  │  │
-│  │  │                                                             │  │  │
-│  │  │  THEN IN N8N - Code Node:                                   │  │  │
-│  │  │  • Filter: ONLY type="Video" or type="Reel"                 │  │  │
-│  │  │  • Filter: duration >= 15 seconds                           │  │  │
-│  │  │  • Filter: duration <= 90 seconds                           │  │  │
-│  │  │  • Remove all images/carousels                              │  │  │
-│  │  │  • If < 3 qualifying videos → Skip the profile              │  │  │
-│  │  │                                                             │  │  │
-│  │  │  WHY 15-90 SECONDS?                                         │  │  │
-│  │  │  • < 15 sec = transitions, music clips, memes               │  │  │
-│  │  │  • 15-60 sec = talking head, quick tips ✓                   │  │  │
-│  │  │  • 60-90 sec = tutorials, explanations ✓                    │  │  │
-│  │  │  • > 90 sec = long-form (less common for UGC)               │  │  │
-│  │  │                                                             │  │  │
-│  │  │  80 profiles → ~50 with enough qualifying videos            │  │  │
-│  │  └────────────────────────────────────────────────────────────┘  │  │
-│  │                                                                   │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### STEP 7: FILTER & SORT REELS
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 7: FILTER & SORT REELS                                             │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │  N8N: Code Node                                                   │  │
-│  │                                                                   │  │
-│  │  For each profile:                                                │  │
-│  │  1. Filter: Only Reels (not images)                              │  │
-│  │  2. Check: Do they have at least 3 Reels?                        │  │
-│  │     • NO → Skip the profile                                      │  │
-│  │     • YES → Continue                                              │  │
-│  │  3. Sort: Highest engagement first                               │  │
-│  │  4. Take: Top 3 Reels                                            │  │
-│  │  5. Save: URL + likes + caption for each                         │  │
-│  │                                                                   │  │
-│  │  100 profiles → ~70 with enough Reels                            │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
----
-
-## N8N Code Snippets
-
-### Duration Filter Code (Step 6)
-```javascript
-// Filter for reels with "talking" duration (15-90 seconds)
-const reels = items.filter(item => {
-  const duration = item.json.videoDuration || 0;
-  const type = item.json.type;
-  
-  return (
-    (type === 'Video' || type === 'Reel') &&
-    duration >= 15 &&
-    duration <= 90
-  );
-});
-
-// Skip profile if less than 3 qualifying reels
-if (reels.length < 3) {
-  return []; // Skip this profile
-}
-
-// Sort by engagement (likes + comments)
-reels.sort((a, b) => {
-  const engagementA = (a.json.likesCount || 0) + (a.json.commentsCount || 0);
-  const engagementB = (b.json.likesCount || 0) + (b.json.commentsCount || 0);
-  return engagementB - engagementA;
-});
-
-// Return top 3
-return reels.slice(0, 3);
-```
-
-### STEP 8: CLAUDE ANALYZES UGC ABILITY
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 8: CLAUDE ANALYZES UGC ABILITY                                     │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │  LOOP: For each profile                                          │  │
-│  │                                                                   │  │
-│  │  ┌────────────────────────────────────────────────────────────┐  │  │
-│  │  │  CLAUDE API: Analyze UGC potential                         │  │  │
-│  │  │                                                             │  │  │
-│  │  │  Input:                                                     │  │  │
-│  │  │  • Username, followers, bio                                 │  │  │
-│  │  │  • Top 3 Reel URLs + captions                              │  │  │
-│  │  │                                                             │  │  │
-│  │  │  Claude evaluates:                                          │  │  │
-│  │  │  • Do they talk in videos? (YES/NO) ← MUST BE YES          │  │  │
-│  │  │  • Voice & audio (1-10)                                     │  │  │
-│  │  │  • Camera presence (1-10)                                   │  │  │
-│  │  │  • Energy level (1-10)                                      │  │  │
-│  │  │  • Authenticity (1-10)                                      │  │  │
-│  │  │  • Production quality (1-10)                                │  │  │
-│  │  │  • STYLE (Tutorial/Review/Entertainment/Inspiration)        │  │  │
-│  │  │  • ENGLISH (YES/NO)                                         │  │  │
-│  │  │  • Red flags                                                │  │  │
-│  │  │                                                             │  │  │
-│  │  │  Output:                                                    │  │  │
-│  │  │  • overall_ugc_score (average)                              │  │  │
-│  │  │  • recommendation: CONTACT_PRIORITY / CONTACT / SKIP       │  │  │
-│  │  │  • reasoning (short explanation)                            │  │  │
-│  │  └────────────────────────────────────────────────────────────┘  │  │
-│  │                                                                   │  │
-│  │  50 profiles → ~20 approved (CONTACT or CONTACT_PRIORITY)       │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### STEP 9: SAVE ALL RESULTS
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 9: SAVE ALL RESULTS                                                │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │  SUPABASE: Save ALL analyzed profiles                            │  │
-│  │                                                                   │  │
-│  │  Table: profiles                                                  │  │
-│  │  ┌────────────────────────────────────────────────────────────┐  │  │
-│  │  │ • id (auto)                                                 │  │  │
-│  │  │ • username                                                  │  │  │
-│  │  │ • followers                                                 │  │  │
-│  │  │ • engagement_rate                                           │  │  │
-│  │  │ • bio                                                       │  │  │
-│  │  │ • source (which competitor they tagged)                    │  │  │
-│  │  │ • talks_in_video (true/false)                              │  │  │
-│  │  │ • voice_score                                               │  │  │
-│  │  │ • camera_score                                              │  │  │
-│  │  │ • energy_score                                              │  │  │
-│  │  │ • authenticity_score                                        │  │  │
-│  │  │ • production_score                                          │  │  │
-│  │  │ • content_style                                             │  │  │
-│  │  │ • speaks_english                                            │  │  │
-│  │  │ • overall_ugc_score                                         │  │  │
-│  │  │ • recommendation                                            │  │  │
-│  │  │ • reasoning                                                 │  │  │
-│  │  │ • analyzed_at                                               │  │  │
-│  │  └────────────────────────────────────────────────────────────┘  │  │
-│  │                                                                   │  │
-│  │  Table: top_videos                                                │  │
-│  │  ┌────────────────────────────────────────────────────────────┐  │  │
-│  │  │ • id (auto)                                                 │  │  │
-│  │  │ • profile_id (link to profiles)                            │  │  │
-│  │  │ • video_url                                                 │  │  │
-│  │  │ • likes                                                     │  │  │
-│  │  │ • comments                                                  │  │  │
-│  │  │ • caption                                                   │  │  │
-│  │  │ • rank (1, 2, or 3)                                        │  │  │
-│  │  └────────────────────────────────────────────────────────────┘  │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### STEP 10: EXPORT APPROVED TO GOOGLE SHEETS
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│ STEP 10: EXPORT APPROVED TO GOOGLE SHEETS                               │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │  FILTER: Only recommendation = CONTACT or CONTACT_PRIORITY       │  │
-│  │                                                                   │  │
-│  │  GOOGLE SHEETS: Add row for each                                 │  │
-│  │                                                                   │  │
-│  Columns:                                                         │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │ A: Handle (@username)                                       │  │
-│  │ B: Followers                                                │  │
-│  │ C: Engagement %                                             │  │
-│  │ D: UGC Score (overall)                                      │  │
-│  │ E: Voice Score                                              │  │
-│  │ F: Camera Score                                             │  │
-│  │ G: Energy Score                                             │  │
-│  │ H: Style (Tutorial/Review/Entertainment/Inspiration)        │  │
-│  │ I: English (YES/NO)                                         │  │
-│  │ J: Avg Video Duration (sec)  ← NEW                          │  │
-│  │ K: Source (which competitor)                                │  │
-│  │ L: Top Video 1 (clickable link)                             │  │
-│  │ M: Top Video 2 (clickable link)                             │  │
-│  │ N: Top Video 3 (clickable link)                             │  │
-│  │ O: Claude's Notes                                           │  │
-│  │ P: Priority (PRIORITY or normal)                            │  │
-│  │ Q: Status (empty - you fill in)                             │  │
-│  │ R: Date Added                                               │  │
-│  └────────────────────────────────────────────────────────────┘  │
-```
-
----
-
-## Claude Prompt for UGC Analysis
-
-```markdown
-# UGC CREATOR ANALYSIS FOR 21DRAW
-
-## Profile Data:
-- Username: {{ username }}
-- Followers: {{ followers }}
-- Engagement Rate: {{ engagement_rate }}%
-- Bio: {{ bio }}
-- Source: Tagged @{{ source_competitor }}
-
-## Top 3 Videos/Reels:
-
-### Video 1 (Highest Engagement)
-- URL: {{ video_1_url }}
-- Likes: {{ video_1_likes }}
-- Comments: {{ video_1_comments }}
-- Caption: {{ video_1_caption }}
-
-### Video 2
-- URL: {{ video_2_url }}
-- Likes: {{ video_2_likes }}
-- Comments: {{ video_2_comments }}
-- Caption: {{ video_2_caption }}
-
-### Video 3
-- URL: {{ video_3_url }}
-- Likes: {{ video_3_likes }}
-- Comments: {{ video_3_comments }}
-- Caption: {{ video_3_caption }}
-
----
-
-## ANALYZE:
-
-### A. CRITICAL - TALKS IN VIDEOS? (YES/NO)
-Does this person speak/talk in their videos?
-- Music-only or text-overlay = NO
-- Must have actual voice/speech = YES
-
-IF NO → Return recommendation "SKIP" immediately.
-
-### B. VOICE & AUDIO (1-10 each)
-- Voice clarity (clear, easy to understand?)
-- Audio quality (good mic, no noise?)
-- Tone stability (confident, stable tone?)
-
-### C. CAMERA PRESENCE (1-10 each)
-- Comfort on camera (natural, relaxed?)
-- Energy level (engaging, good pacing?)
-- Authenticity (genuine, not overly scripted?)
-
-### D. PRODUCTION (1-10)
-- Visual quality (lighting, camera stability?)
-- Editing quality (well-edited, professional?)
-
-### E. CONTENT STYLE
-Categorize their primary style:
-- **Tutorial** - Teaches/explains how to do things
-- **Review** - Reviews products, courses, tools
-- **Entertainment** - Funny, engaging, personality-driven
-- **Inspiration** - Shows their work, motivational
-
-### F. LANGUAGE
-- **speaks_english**: Does this person speak English in their videos? (YES/NO)
-- If bio/captions are in English but they don't SPEAK, still mark as NO
-
-### G. RED FLAGS (YES/NO each)
-- Sells competing courses/products?
-- Fake/bought followers?
-- Inappropriate content?
-- Controversial topics?
-- Inactive (no posts 30+ days)?
-
-### H. RECOMMENDATION
-- **CONTACT_PRIORITY**: Talks clearly ✓, scores >= 8, English YES, no red flags
-- **CONTACT**: Talks ✓, scores >= 6, minor issues OK
-- **SKIP**: Doesn't talk, OR scores < 6, OR red flags
-
----
-
-## RESPOND IN THIS EXACT JSON:
+**Output structure (per profile):**
 ```json
 {
-  "talks_in_videos": true,
-  "voice_clarity": 8,
-  "audio_quality": 7,
-  "tone_stability": 8,
-  "camera_comfort": 8,
-  "energy_level": 7,
-  "authenticity": 9,
-  "production_quality": 7,
-  "content_style": "Tutorial",
-  "speaks_english": true,
-  "overall_ugc_score": 7.8,
-  "red_flags": [],
-  "recommendation": "CONTACT_PRIORITY",
-  "reasoning": "Clear English speaker with stable tone. Very comfortable on camera, authentic personality. Creates tutorial-style content. Previously made UGC for Skillshare. Perfect for 21Draw."
+  "username": "shapecarver",
+  "followersCount": 60056,
+  "biography": "...",
+  "verified": true,
+  "businessCategoryName": "Artist",
+  "postsCount": 393,
+  "latestPosts": [
+    {
+      "type": "Video",
+      "productType": "clips",
+      "shortCode": "DJw1vklSUXs",
+      "caption": "...",
+      "likesCount": 36100,
+      "commentsCount": 259,
+      "videoDuration": null,
+      "videoUrl": "https://...",
+      "url": "https://www.instagram.com/p/DJw1vklSUXs/",
+      "displayUrl": "https://...",
+      "hashtags": ["conceptart", ...],
+      "mentions": ["eleeza", ...],
+      "timestamp": "2025-..."
+    }
+  ]
 }
 ```
+
+**Key Apify field mappings:**
+| Apify Field | Meaning |
+|---|---|
+| `productType: "clips"` | Instagram Reels |
+| `productType: "igtv"` | IGTV videos |
+| `productType: "feed"` | Regular feed posts |
+| `type: "Video"` | Video content (any type) |
+| `type: "Image"` | Image post |
+| `likesCount` | Number of likes |
+| `commentsCount` | Number of comments |
+| `videoDuration` | Duration in seconds (not always available) |
+
+### Check DB
+**Type:** Supabase (Select)
+**What it does:** Checks if the creator username already exists in the `profiles` table to avoid re-processing.
+**Status:** Should be ACTIVE in production to prevent duplicate processing.
+
+### New?
+**Type:** IF/Switch
+**What it does:** Routes creators to processing (new) or skip (already exists in DB).
+
+### Filter Reels ⚠️ (Updated Feb 4, 2026)
+**Type:** Code (JavaScript, Run Once for Each Item)
+**What it does:** Extracts reel/video data from Apify's `latestPosts` array, calculates engagement metrics, and selects top 3 reels.
+
+**Logic:**
+1. Reads `profile.latestPosts` array from Apify output
+2. Filters for reels: `productType === "clips"` or `type === "Video"` (excluding IGTV)
+3. Applies duration filter (15-90 seconds) when duration data is available
+4. Falls back to all video content if no reels match the strict filter
+5. Sorts qualifying reels by engagement (likes + comments) descending
+6. Takes top 3 reels
+7. Calculates: `engagement_rate = avg(likes + comments) / followers × 100`
+8. If no reels found, calculates engagement from all posts as fallback
+
+**Full code:**
+```javascript
+const index = $itemIndex;
+const profile = $input.item.json;
+const sourceData = $('Dedupe Profiles').all()[index].json;
+
+const posts = profile.latestPosts || [];
+
+const reels = posts.filter(post => {
+  const isClip = (post.productType === 'clips');
+  const isVideo = (post.type === 'Video' && post.productType !== 'igtv');
+  if (post.videoDuration) {
+    const dur = Number(post.videoDuration);
+    if (dur < 15 || dur > 90) return false;
+  }
+  return isClip || isVideo;
+});
+
+let qualifyingReels = reels;
+if (qualifyingReels.length === 0) {
+  qualifyingReels = posts.filter(post =>
+    post.type === 'Video' || post.productType === 'clips' || post.productType === 'igtv'
+  );
+}
+
+qualifyingReels.sort((a, b) => {
+  const engA = (Number(a.likesCount) || 0) + (Number(a.commentsCount) || 0);
+  const engB = (Number(b.likesCount) || 0) + (Number(b.commentsCount) || 0);
+  return engB - engA;
+});
+
+const topReels = qualifyingReels.slice(0, 3);
+const followers = Number(profile.followersCount) || 0;
+let engagement_rate = 0, avg_likes = 0, avg_comments = 0, avg_duration = 0;
+
+if (qualifyingReels.length > 0 && followers > 0) {
+  const totalLikes = qualifyingReels.reduce((sum, r) => sum + (Number(r.likesCount) || 0), 0);
+  const totalComments = qualifyingReels.reduce((sum, r) => sum + (Number(r.commentsCount) || 0), 0);
+  const totalDuration = qualifyingReels.reduce((sum, r) => sum + (Number(r.videoDuration) || 0), 0);
+  avg_likes = Math.round(totalLikes / qualifyingReels.length);
+  avg_comments = Math.round(totalComments / qualifyingReels.length);
+  const reelsWithDur = qualifyingReels.filter(r => r.videoDuration);
+  avg_duration = reelsWithDur.length > 0 ? Math.round(totalDuration / reelsWithDur.length) : 0;
+  const avgEngagement = (totalLikes + totalComments) / qualifyingReels.length;
+  engagement_rate = Number(((avgEngagement / followers) * 100).toFixed(2));
+}
+
+if (qualifyingReels.length === 0 && posts.length > 0 && followers > 0) {
+  const totalLikes = posts.reduce((sum, p) => sum + (Number(p.likesCount) || 0), 0);
+  const totalComments = posts.reduce((sum, p) => sum + (Number(p.commentsCount) || 0), 0);
+  avg_likes = Math.round(totalLikes / posts.length);
+  avg_comments = Math.round(totalComments / posts.length);
+  engagement_rate = Number((((totalLikes + totalComments) / posts.length / followers) * 100).toFixed(2));
+}
+
+function getReelUrl(post) {
+  if (post.url) return post.url;
+  if (post.shortCode) return `https://www.instagram.com/reel/${post.shortCode}/`;
+  return '';
+}
+
+return {
+  json: {
+    username: profile.username,
+    followers: followers,
+    bio: (profile.biography || '').substring(0, 500),
+    source: sourceData.source || 'unknown',
+    source_type: sourceData.sourceType || 'tagged',
+    has_art_content: true,
+    verified: profile.verified || false,
+    business_category: profile.businessCategoryName || '',
+    engagement_rate: engagement_rate,
+    avg_likes: avg_likes,
+    avg_comments: avg_comments,
+    avg_duration: avg_duration,
+    total_reels_found: qualifyingReels.length,
+    reel_1_url: topReels[0] ? getReelUrl(topReels[0]) : '',
+    reel_1_likes: topReels[0] ? (Number(topReels[0].likesCount) || 0) : 0,
+    reel_1_comments: topReels[0] ? (Number(topReels[0].commentsCount) || 0) : 0,
+    reel_1_duration: topReels[0] ? (Number(topReels[0].videoDuration) || 0) : 0,
+    reel_1_caption: topReels[0] ? (topReels[0].caption || '').substring(0, 300) : '',
+    reel_2_url: topReels[1] ? getReelUrl(topReels[1]) : '',
+    reel_2_likes: topReels[1] ? (Number(topReels[1].likesCount) || 0) : 0,
+    reel_2_comments: topReels[1] ? (Number(topReels[1].commentsCount) || 0) : 0,
+    reel_2_duration: topReels[1] ? (Number(topReels[1].videoDuration) || 0) : 0,
+    reel_2_caption: topReels[1] ? (topReels[1].caption || '').substring(0, 300) : '',
+    reel_3_url: topReels[2] ? getReelUrl(topReels[2]) : '',
+    reel_3_likes: topReels[2] ? (Number(topReels[2].likesCount) || 0) : 0,
+    reel_3_comments: topReels[2] ? (Number(topReels[2].commentsCount) || 0) : 0,
+    reel_3_duration: topReels[2] ? (Number(topReels[2].videoDuration) || 0) : 0,
+    reel_3_caption: topReels[2] ? (topReels[2].caption || '').substring(0, 300) : '',
+    analyzed_at: new Date().toISOString()
+  }
+};
 ```
+
+**Output fields:**
+| Field | Type | Description |
+|---|---|---|
+| username | string | Instagram handle |
+| followers | number | Follower count |
+| bio | string | Profile bio (max 500 chars) |
+| source | string | Competitor who tagged them |
+| source_type | string | "tagged" or "hashtag" |
+| has_art_content | boolean | Always true (pre-filtered) |
+| verified | boolean | Blue checkmark |
+| business_category | string | IG business category |
+| engagement_rate | number | Avg (likes+comments)/followers × 100 |
+| avg_likes | number | Average likes across qualifying reels |
+| avg_comments | number | Average comments across qualifying reels |
+| avg_duration | number | Average reel duration in seconds (0 if unavailable) |
+| total_reels_found | number | Number of qualifying reels found |
+| reel_1_url | string | URL of highest-engagement reel |
+| reel_1_likes | number | Likes on reel 1 |
+| reel_1_comments | number | Comments on reel 1 |
+| reel_1_duration | number | Duration of reel 1 (0 if unavailable) |
+| reel_1_caption | string | Caption of reel 1 (max 300 chars) |
+| reel_2_* | | Same fields for 2nd best reel |
+| reel_3_* | | Same fields for 3rd best reel |
+| analyzed_at | string | ISO timestamp |
+
+### Claude Analysis ⚠️ (Updated Feb 4, 2026)
+**Type:** HTTP Request (POST to `https://api.anthropic.com/v1/messages`)
+**Model:** claude-sonnet-4-20250514
+**Authentication:** Predefined Credential Type → Anthropic
+**Headers:**
+- `anthropic-version: 2023-06-01`
+- `content-type: application/json`
+
+**What it does:** Sends full profile + reel data to Claude for evaluation. Claude returns a JSON with niche_relevance (1-10), profile_score (1-10), recommendation (COLLABORATE/REVIEW/PASS/REJECT), and reasoning.
+
+**JSON Body:**
+```json
+{
+  "model": "claude-sonnet-4-20250514",
+  "max_tokens": 1024,
+  "messages": [
+    {
+      "role": "user",
+      "content": {{ JSON.stringify("Evaluate this Instagram creator for potential UGC partnership with 21Draw, an online art education platform.\n\nPROFILE DATA:\nUsername: " + $json.username + "\nFollowers: " + $json.followers + "\nEngagement Rate: " + ($json.engagement_rate || 0) + "%\nAvg Likes: " + ($json.avg_likes || 0) + "\nAvg Comments: " + ($json.avg_comments || 0) + "\nBio: " + ($json.bio || "").replace(/[\n\r]/g, " ") + "\nVerified: " + $json.verified + "\nBusiness Category: " + ($json.business_category || "none") + "\nTotal Reels Found: " + ($json.total_reels_found || 0) + "\n\nTOP REELS:\nReel 1: " + ($json.reel_1_url || "none") + "\n- Likes: " + ($json.reel_1_likes || 0) + " | Comments: " + ($json.reel_1_comments || 0) + "\n- Caption: " + ($json.reel_1_caption || "").replace(/[\n\r]/g, " ") + "\n\nReel 2: " + ($json.reel_2_url || "none") + "\n- Likes: " + ($json.reel_2_likes || 0) + " | Comments: " + ($json.reel_2_comments || 0) + "\n- Caption: " + ($json.reel_2_caption || "").replace(/[\n\r]/g, " ") + "\n\nReel 3: " + ($json.reel_3_url || "none") + "\n- Likes: " + ($json.reel_3_likes || 0) + " | Comments: " + ($json.reel_3_comments || 0) + "\n- Caption: " + ($json.reel_3_caption || "").replace(/[\n\r]/g, " ") + "\n\nEVALUATION CRITERIA:\n- Niche relevance to art education (drawing, painting, sculpting, digital art, art tutorials)\n- Engagement quality (likes, comments relative to followers)\n- Content style fit for educational art platform\n- Follower count (accounts with 5k+ followers in art niche are valuable)\n- Even accounts with lower engagement rates should be COLLABORATE if they have strong art content and decent following\n\nRecommendation options:\n- COLLABORATE: Strong fit, good metrics, art-relevant content\n- REVIEW: Promising but needs manual review\n- PASS: Not a good fit for 21Draw\n- REJECT: Clearly unsuitable (spam, no art content, very low following)\n\nRespond with JSON only, no other text:\n{\"niche_relevance\": 1-10, \"profile_score\": 1-10, \"recommendation\": \"COLLABORATE/REVIEW/PASS/REJECT\", \"reasoning\": \"your explanation here\"}") }}
+    }
+  ]
+}
+```
+
+**Key implementation detail:** The `content` value is wrapped in `JSON.stringify(...)` to properly escape newlines, quotes, and special characters from bios and captions. User-generated text fields also use `.replace(/[\n\r]/g, " ")` to strip embedded newlines before insertion.
+
+**Evaluation criteria built into the prompt:**
+- Art niche relevance is weighted heavily
+- 5k+ followers with art content = valuable
+- Lower engagement doesn't disqualify if content and following are strong
+- REJECT is only for spam, no art content, or very low following
+
+### Merge ⚠️ (Updated Feb 4, 2026)
+**Type:** Code (JavaScript, Run Once for Each Item)
+**What it does:** Combines Claude's analysis output (recommendation, reasoning, scores) with the original profile + reel data from Filter Reels. Passes all fields through to downstream nodes.
+
+**Full code:**
+```javascript
+const index = $itemIndex;
+const profile = $('Filter Reels').all()[index].json;
+const claudeResponse = $input.item.json;
+let analysis = {};
+try {
+  let text = claudeResponse.content?.[0]?.text || '{}';
+  text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+  analysis = JSON.parse(text);
+} catch (e) {
+  analysis = {
+    recommendation: 'REVIEW',
+    reasoning: 'Could not parse AI analysis',
+    profile_score: 5,
+    niche_relevance: 5
+  };
+}
+return {
+  json: {
+    username: profile.username,
+    followers: profile.followers || 0,
+    bio: profile.bio || '',
+    source: profile.source || '',
+    source_type: profile.source_type || '',
+    has_art_content: profile.has_art_content || false,
+    verified: profile.verified || false,
+    niche_relevance: analysis.niche_relevance || 5,
+    profile_score: analysis.profile_score || 5,
+    recommendation: analysis.recommendation || 'REVIEW',
+    reasoning: analysis.reasoning || '',
+    status: 'PENDING_REVIEW',
+    analyzed_at: new Date().toISOString(),
+    engagement_rate: profile.engagement_rate || 0,
+    avg_likes: profile.avg_likes || 0,
+    avg_comments: profile.avg_comments || 0,
+    avg_duration: profile.avg_duration || 0,
+    total_reels_found: profile.total_reels_found || 0,
+    reel_1_url: profile.reel_1_url || '',
+    reel_1_likes: profile.reel_1_likes || 0,
+    reel_1_comments: profile.reel_1_comments || 0,
+    reel_1_duration: profile.reel_1_duration || 0,
+    reel_1_caption: profile.reel_1_caption || '',
+    reel_2_url: profile.reel_2_url || '',
+    reel_2_likes: profile.reel_2_likes || 0,
+    reel_2_comments: profile.reel_2_comments || 0,
+    reel_2_duration: profile.reel_2_duration || 0,
+    reel_2_caption: profile.reel_2_caption || '',
+    reel_3_url: profile.reel_3_url || '',
+    reel_3_likes: profile.reel_3_likes || 0,
+    reel_3_comments: profile.reel_3_comments || 0,
+    reel_3_duration: profile.reel_3_duration || 0,
+    reel_3_caption: profile.reel_3_caption || ''
+  }
+};
+```
+
+**Error handling:** If Claude's response can't be parsed as JSON (e.g., it includes markdown fencing), the node falls back to `REVIEW` with default scores of 5.
+
+### Save DB (Deactivated)
+**Type:** Supabase (Insert)
+**What it does:** Saves the merged profile + analysis data to the `profiles` table.
+**Status:** Currently DEACTIVATED. Re-enable when ready for production.
+
+### Approved?
+**Type:** IF/Switch
+**What it does:** Routes creators based on Claude's recommendation.
+**True Branch conditions (any match):**
+- `recommendation` equals `REVIEW_PRIORITY`
+- `recommendation` equals `REVIEW`
+- `recommendation` equals `COLLABORATE`
+- `recommendation` equals `PARTNER`
+
+**False Branch:** Routes to Skip (not added to Google Sheets).
+
+### Sheets1
+**Type:** Google Sheets (Append Row)
+**Credential:** Google Sheets account 2
+**Document:** 21Draw UGC Candidates
+**Sheet:** Sheet1
+**Mapping:** Map Automatically (all fields from Merge node become columns)
+
+### Skip
+**Type:** NoOp
+**What it does:** End node for rejected creators.
+
+### Done
+**Type:** NoOp
+**What it does:** End node for creators that already exist in DB.
 
 ---
 
-## Setup Checklist
+## Google Sheets Output Columns
 
-```
-╔═══════════════════════════════════════════════════════════════════════════╗
-║                                                                           ║
-║                    SETUP CHECKLIST                                        ║
-║                                                                           ║
-╚═══════════════════════════════════════════════════════════════════════════╝
+The sheet receives all fields from the Merge node. Columns include:
 
-ACCOUNTS (create if you don't have):
-────────────────────────────────────
-□ Apify - apify.com (free credits to start)
-□ Supabase - supabase.com (free tier)
-□ Google Sheets - (you probably already have)
-□ Anthropic API - console.anthropic.com (for Claude)
-
-N8N CREDENTIALS (add in N8N):
-─────────────────────────────
-□ Apify API Token
-□ Supabase URL + API Key
-□ Google Sheets OAuth
-□ Anthropic API Key (for Claude calls)
-
-SUPABASE TABLES (create):
-─────────────────────────
-□ profiles (see structure above)
-□ top_videos (see structure above)
-
-GOOGLE SHEET (create):
-──────────────────────
-□ New sheet: "21Draw UGC Candidates"
-□ Add column headers (A-Q)
-
-GITHUB (create):
-────────────────
-□ Repository: "ugc-finder-21draw"
-□ Folder: docs/
-□ File: docs/UGC_FINDER.md
-□ File: .env.example
-□ File: .gitignore
-```
+| Column | Description |
+|---|---|
+| username | Instagram handle |
+| followers | Follower count |
+| bio | Profile bio |
+| source | Competitor (e.g., prokotv) |
+| source_type | tagged or hashtag |
+| has_art_content | TRUE/FALSE |
+| verified | TRUE/FALSE |
+| niche_relevance | 1-10 score from Claude |
+| profile_score | 1-10 score from Claude |
+| recommendation | COLLABORATE / REVIEW / PASS / REJECT |
+| reasoning | Claude's explanation |
+| status | PENDING_REVIEW |
+| analyzed_at | Timestamp |
+| engagement_rate | Percentage |
+| avg_likes | Average likes across reels |
+| avg_comments | Average comments across reels |
+| avg_duration | Average reel duration (seconds) |
+| total_reels_found | Count of qualifying reels |
+| reel_1_url | URL of top reel |
+| reel_1_likes | Likes on top reel |
+| reel_1_comments | Comments on top reel |
+| reel_1_duration | Duration (seconds, 0 if unavailable) |
+| reel_1_caption | Caption text |
+| reel_2_* | Same fields for 2nd reel |
+| reel_3_* | Same fields for 3rd reel |
 
 ---
 
-## Implementation Timeline
-
-```
-╔═══════════════════════════════════════════════════════════════════════════╗
-║                                                                           ║
-║                    IMPLEMENTATION TIMELINE                                ║
-║                                                                           ║
-╚═══════════════════════════════════════════════════════════════════════════╝
-
-DAY 1: Setup (2-3 hours)
-────────────────────────
-□ 09:00 - Create Apify account, get API token
-□ 09:30 - Create Supabase project, create tables
-□ 10:00 - Create Google Sheet with correct columns
-□ 10:30 - Add credentials in N8N
-□ 11:00 - Create GitHub repo, folder structure
-□ 11:30 - Write UGC_FINDER.md (business logic)
-
-DAY 2: Build workflow (3-4 hours)
-─────────────────────────────────
-□ 09:00 - Build Steps 1-3 (Trigger → Apify → Extract)
-□ 10:00 - Test with 1 competitor, 10 posts
-□ 10:30 - Build Steps 4-5 (Duplicate check → Filter)
-□ 11:00 - Build Steps 6-7 (Profile scraper → Top reels)
-□ 12:00 - Test entire first half
-□ 13:00 - Build Step 8 (Claude analysis)
-□ 14:00 - Build Steps 9-10 (Supabase → Sheets)
-□ 15:00 - Test entire workflow with 20 profiles
-
-DAY 3: Test & fine-tuning (2 hours)
-───────────────────────────────────
-□ 09:00 - Run full test with all 5 competitors
-□ 10:00 - Review results in Google Sheets
-□ 10:30 - Adjust Claude prompt if necessary
-□ 11:00 - Document in GitHub
-□ 11:30 - Export workflow as backup
-
-AFTER DAY 3: Ready to use!
-──────────────────────────
-□ Run workflow when you want to find new creators
-□ Review Google Sheet
-□ Start contacting!
-```
-
----
-
-## Expected Results Per Run
-
-```
-╔═══════════════════════════════════════════════════════════════════════════╗
-║                                                                           ║
-║                    EXPECTED RESULTS PER RUN                               ║
-║                                                                           ║
-╚═══════════════════════════════════════════════════════════════════════════╝
-
-INPUT:
-──────
-5 competitors × 100 posts = 500 posts
-
-AFTER STEP 3 (Extract unique):
-──────────────────────────────
-~300 unique profiles
-
-AFTER STEP 4 (Duplicate check):
-───────────────────────────────
-~250 new profiles (first run: all are new)
-
-AFTER STEP 5 (Basic filter):
-────────────────────────────
-~80 profiles (5k-100k followers, >2% engagement)
-
-AFTER STEP 7 (Has videos/reels):
-────────────────────────────────
-~50 profiles with at least 3 reels
-
-AFTER STEP 8 (Claude approves):
-───────────────────────────────
-~20 profiles who talk in video + good scores
-
-OUTPUT IN GOOGLE SHEETS:
-────────────────────────
-~20 quality candidates per run
-
-ESTIMATED COST PER RUN:
-───────────────────────
-Apify: ~$5-10 (depending on number of profiles)
-Claude: ~$1-2 (50 analyses × ~$0.02)
-Total: ~$7-12 per run
-```
-
----
-
-## Supabase SQL Schema
+## Supabase Schema
 
 ```sql
--- Table for all analyzed profiles
+-- Single table for all profile data including reels
 CREATE TABLE profiles (
     id SERIAL PRIMARY KEY,
-    username VARCHAR(100) NOT NULL,
+    username VARCHAR(100) NOT NULL UNIQUE,
     followers INTEGER,
-    engagement_rate DECIMAL(5,2),
     bio TEXT,
-    source_competitor VARCHAR(100),
-    
-    -- Analysis results
-    talks_in_videos BOOLEAN,
-    voice_clarity INTEGER,
-    audio_quality INTEGER,
-    tone_stability INTEGER,
-    camera_comfort INTEGER,
-    energy_level INTEGER,
-    authenticity INTEGER,
-    production_quality INTEGER,
-    overall_ugc_score DECIMAL(3,1),
-    
-    -- Style and language
-    content_style VARCHAR(50),
-    speaks_english BOOLEAN,
-    
-    -- Recommendation
+    source VARCHAR(100),          -- competitor or seed username
+    source_type VARCHAR(50),      -- 'tagged' or 'similar'
+
+    -- Top 3 reels (stored in same table)
+    reel_1_url TEXT,
+    reel_1_likes INTEGER,
+    reel_1_caption TEXT,
+    reel_2_url TEXT,
+    reel_2_likes INTEGER,
+    reel_2_caption TEXT,
+    reel_3_url TEXT,
+    reel_3_likes INTEGER,
+    reel_3_caption TEXT,
+    avg_duration INTEGER,
+
+    -- Analysis fields
+    engagement_rate DECIMAL(5,2),
+    avg_likes INTEGER,
+    avg_comments INTEGER,
+    has_art_content BOOLEAN DEFAULT false,
+    verified BOOLEAN DEFAULT false,
+    business_category VARCHAR(100),
+    niche_relevance INTEGER,
+    profile_score INTEGER,
     recommendation VARCHAR(50),
     reasoning TEXT,
-    red_flags TEXT[],
-    
-    -- Metadata
-    analyzed_at TIMESTAMP DEFAULT NOW(),
-    
-    -- Avoid duplicates
-    UNIQUE(username)
+    status VARCHAR(50) DEFAULT 'PENDING_REVIEW',
+    analyzed_at TIMESTAMP WITH TIME ZONE,
+
+    -- Timestamps
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
-
--- Table for top videos/reels
-CREATE TABLE top_videos (
-    id SERIAL PRIMARY KEY,
-    profile_id INTEGER REFERENCES profiles(id) ON DELETE CASCADE,
-    video_url TEXT,
-    likes INTEGER,
-    comments INTEGER,
-    caption TEXT,
-    rank INTEGER, -- 1, 2, or 3
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
--- Indexes for faster searches
-CREATE INDEX idx_profiles_username ON profiles(username);
-CREATE INDEX idx_profiles_recommendation ON profiles(recommendation);
-CREATE INDEX idx_top_videos_profile ON top_videos(profile_id);
 ```
 
 ---
 
-## VS Code Project Structure
+## Credentials Required
 
-```
-ugc-finder-21draw/
-│
-├── docs/
-│   └── UGC_FINDER.md         ← Business logic (this document)
-│
-├── workflows/
-│   └── n8n-workflow.json     ← Exported N8N workflow
-│
-├── .env                      ← Your REAL API keys (NEVER to GitHub)
-├── .env.example              ← Template for API keys (safe to share)
-├── .gitignore                ← Protects .env from GitHub
-└── README.md                 ← Project overview
-```
+| Credential | Type | Used By |
+|---|---|---|
+| Apify API Token | HTTP Header Auth | Apify: Tagged Posts, Run an Actor |
+| Anthropic API Key | Predefined (Anthropic) | Claude Analysis |
+| Google Sheets account 2 | OAuth2 | Sheets1 |
+| Supabase | Supabase native | Check DB, Save DB |
+
+**⚠️ Google Sheets OAuth Note:** If the OAuth consent screen is in "Testing" mode, refresh tokens expire after 7 days. Publish to production in Google Cloud Console to get long-lived tokens.
 
 ---
 
-## .env.example Template
+## Troubleshooting
 
-```
-# Copy this file to .env and fill in your actual keys
-# NEVER share your .env file with anyone!
+### Common Issues
 
-# Apify (for Instagram scraping)
-APIFY_API_TOKEN=your_apify_token_here
+**Claude rejects all creators with "0 followers, 0% engagement"**
+- Check that `resultsLimit: 30` is set in the Apify actor input
+- Verify Filter Reels node reads `profile.latestPosts` (not just top-level fields)
+- Ensure Merge node passes through all engagement and reel fields
 
-# Supabase (database)
-SUPABASE_URL=https://xxxxx.supabase.co
-SUPABASE_KEY=your_supabase_key_here
+**"JSON parameter needs to be valid JSON" error in Claude Analysis**
+- The prompt body must use `JSON.stringify(...)` around the content value
+- User-generated text (bio, captions) must have newlines stripped: `.replace(/[\n\r]/g, " ")`
 
-# Anthropic (Claude AI)
-ANTHROPIC_API_KEY=sk-ant-xxxxx
-```
+**Google Sheets OAuth token expired**
+- Re-authenticate in n8n → Credentials → Google Sheets account 2
+- Long-term fix: publish OAuth consent screen to production in Google Cloud Console
 
----
+**Duplicate creators in Google Sheet**
+- Ensure Check DB node is ACTIVE (checks Supabase before processing)
+- Dedupe Profiles node removes duplicates on username before Apify call
 
-## .gitignore
+**Reel duration always shows 0**
+- This is expected — Apify's Instagram Profile Scraper doesn't consistently return `videoDuration` in `latestPosts` data. The workflow handles this gracefully.
 
-```
-# Secret files - NEVER upload to GitHub
-.env
+**Pinned test data causing stale results**
+- If you see an orange "This data is pinned for test executions" banner in any node, click "Unpin" before re-executing.
 
-# System files
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-
-# Node modules (if you ever use them)
-node_modules/
-```
-
----
-
-*Last updated: January 2026*
-*Project: UGC Finder for 21Draw*
-*Method: Competitor Tagging*
 ---
 
 ## Changelog
 
-### v1.1 - January 2026
-- Added video duration filter (15-90 seconds) to Step 6
-- Added N8N code snippets section
-- Added "Avg Video Duration" column to Google Sheets output
-- Rationale: Videos under 15 sec are typically music/transitions, not talking content
+### v1.1 — February 4, 2026
+- **Filter Reels node rewritten:** Now extracts reels from `latestPosts` array, calculates engagement_rate, gets top 3 reel URLs with likes/comments/captions
+- **Claude Analysis prompt updated:** Sends full profile + reel data to Claude (bio, engagement metrics, reel URLs, captions). Uses `JSON.stringify()` to handle special characters. Evaluation criteria tuned to not reject art creators just for lower engagement
+- **Merge node updated:** Passes through all new reel and engagement fields to Google Sheets
+- **Apify actor input updated:** Added `resultsLimit: 30` to fetch posts, not just profile metadata
+- **Google Sheets OAuth fixed:** Re-authenticated expired refresh token
+- **Deduplication improved:** Added Remove Duplicates safety net node
 
-### v1.0 - January 2026
-- Initial documentation
+### v1.0 — January 2026
+- Initial workflow setup
+- Basic profile scraping and Claude analysis
+- Google Sheets and Supabase integration
