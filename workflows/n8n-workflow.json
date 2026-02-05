@@ -1,0 +1,520 @@
+{
+  "name": "UGC Finder - Complete",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "start",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ====== SETTINGS ======\nconst COMPETITOR = 'proko';\nconst RESULTS_LIMIT = 5;\nconst SIMILAR_LIMIT = 30;\nconst MIN_FOLLOWERS = 5000;\nconst MAX_FOLLOWERS = 100000;\n// ======================\n\nreturn [{ json: { competitor: COMPETITOR, resultsLimit: RESULTS_LIMIT, similarLimit: SIMILAR_LIMIT, minFollowers: MIN_FOLLOWERS, maxFollowers: MAX_FOLLOWERS } }];"
+      },
+      "id": "settings",
+      "name": "Settings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "notesInFlow": true,
+      "notes": "Edit settings here"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/apify~instagram-scraper/run-sync-get-dataset-items",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"usernames\": [\"{{ $json.competitor }}\"],\n  \"resultsLimit\": {{ $json.resultsLimit }},\n  \"resultsType\": \"posts\",\n  \"taggedPosts\": true\n}",
+        "options": {"timeout": 300000}
+      },
+      "id": "apify-tagged",
+      "name": "Apify: Tagged Posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300],
+      "credentials": {"httpQueryAuth": {"id": "apify", "name": "Apify"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const posts = $input.all().map(i => i.json);\nconst settings = $('Settings').first().json;\nconst unique = new Map();\n\nfor (const p of posts) {\n  const u = p.ownerUsername || p.username;\n  const f = p.ownerFollowers || p.followersCount || 0;\n  if (!u || unique.has(u)) continue;\n  if (f < settings.minFollowers || f > settings.maxFollowers) continue;\n  unique.set(u, { username: u, followers: f, source: settings.competitor, sourceType: 'tagged' });\n}\n\nreturn Array.from(unique.values()).map(p => ({ json: p }));"
+      },
+      "id": "extract",
+      "name": "Extract Profiles",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {"batchSize": 1, "options": {}},
+      "id": "loop1",
+      "name": "Phase 1 Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "tableId": "profiles",
+        "filterType": "string",
+        "filterString": "=username=eq.{{ $json.username }}"
+      },
+      "id": "check1",
+      "name": "Check DB",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1100, 300],
+      "credentials": {"supabaseApi": {"id": "supabase", "name": "Supabase"}}
+    },
+    {
+      "parameters": {
+        "conditions": {"options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"}, "conditions": [{"id": "new", "leftValue": "={{ $json.length }}", "rightValue": "0", "operator": {"type": "number", "operation": "equals"}}], "combinator": "and"},
+        "options": {}
+      },
+      "id": "ifNew1",
+      "name": "New?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1320, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/apify~instagram-scraper/run-sync-get-dataset-items",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"usernames\": [\"{{ $('Phase 1 Loop').item.json.username }}\"],\n  \"resultsLimit\": 30,\n  \"resultsType\": \"posts\"\n}",
+        "options": {"timeout": 300000}
+      },
+      "id": "apify-profile1",
+      "name": "Apify: Profile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1540, 180],
+      "credentials": {"httpQueryAuth": {"id": "apify", "name": "Apify"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst posts = data.latestPosts || data.posts || [];\nconst profile = $('Phase 1 Loop').item.json;\n\nconst reels = posts.filter(p => {\n  const dur = p.videoDuration || 0;\n  const type = (p.type || p.productType || '').toLowerCase();\n  return (type.includes('video') || type.includes('reel')) && dur >= 15 && dur <= 90;\n});\n\nif (reels.length < 3) return [];\n\nreels.sort((a, b) => ((b.likesCount||0) + (b.commentsCount||0)) - ((a.likesCount||0) + (a.commentsCount||0)));\n\nconst top3 = reels.slice(0, 3).map((r, i) => ({\n  url: r.url || `https://instagram.com/reel/${r.shortCode}`,\n  likes: r.likesCount || 0,\n  comments: r.commentsCount || 0,\n  caption: (r.caption || '').substring(0, 300)\n}));\n\nreturn [{ json: {\n  username: profile.username,\n  followers: data.followersCount || profile.followers,\n  bio: (data.biography || '').substring(0, 500),\n  source: profile.source,\n  source_type: profile.sourceType,\n  reel_1_url: top3[0].url, reel_1_likes: top3[0].likes, reel_1_caption: top3[0].caption,\n  reel_2_url: top3[1].url, reel_2_likes: top3[1].likes, reel_2_caption: top3[1].caption,\n  reel_3_url: top3[2].url, reel_3_likes: top3[2].likes, reel_3_caption: top3[2].caption,\n  avg_duration: Math.round(reels.slice(0,3).reduce((s,r) => s + (r.videoDuration||0), 0) / 3)\n}}];"
+      },
+      "id": "filter1",
+      "name": "Filter Reels",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "x-api-key", "value": "={{$credentials.httpHeaderAuth.value}}"}, {"name": "anthropic-version", "value": "2023-06-01"}, {"name": "content-type", "value": "application/json"}]},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 1024,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"# UGC CREATOR ANALYSIS FOR 21DRAW\\n\\n## Profile:\\n- Username: {{ $json.username }}\\n- Followers: {{ $json.followers }}\\n- Bio: {{ $json.bio }}\\n- Source: {{ $json.source_type }} ({{ $json.source }})\\n\\n## Top 3 Reels:\\n1. {{ $json.reel_1_url }} ({{ $json.reel_1_likes }} likes) - {{ $json.reel_1_caption }}\\n2. {{ $json.reel_2_url }} ({{ $json.reel_2_likes }} likes) - {{ $json.reel_2_caption }}\\n3. {{ $json.reel_3_url }} ({{ $json.reel_3_likes }} likes) - {{ $json.reel_3_caption }}\\n\\n## ANALYZE:\\n\\n### A. CRITICAL - TALKS IN VIDEOS? (YES/NO)\\nDoes this person speak in their videos? Music-only or text-overlay = NO. Must have actual voice = YES.\\nIF NO → Return recommendation SKIP immediately.\\n\\n### B. Score each 1-10:\\n- voice_clarity: Clear, easy to understand?\\n- audio_quality: Good mic, no noise?\\n- tone_stability: Confident, stable tone?\\n- camera_comfort: Natural, relaxed on camera?\\n- energy_level: Engaging, good pacing?\\n- authenticity: Genuine, not overly scripted?\\n- production_quality: Good lighting, editing?\\n\\n### C. Content style: Tutorial / Review / Entertainment / Inspiration\\n\\n### D. speaks_english: YES/NO (must actually SPEAK English, not just captions)\\n\\n### E. Red flags (list any): competing courses, fake followers, inappropriate, controversial, inactive 30+ days\\n\\n### F. Recommendation:\\n- CONTACT_PRIORITY: Talks clearly, scores >= 8, English YES, no red flags\\n- CONTACT: Talks, scores >= 6, minor issues OK\\n- SKIP: Doesn't talk, scores < 6, or red flags\\n\\n## RESPOND ONLY WITH THIS JSON:\\n{\\\"talks_in_videos\\\": true, \\\"voice_clarity\\\": 8, \\\"audio_quality\\\": 7, \\\"tone_stability\\\": 8, \\\"camera_comfort\\\": 8, \\\"energy_level\\\": 7, \\\"authenticity\\\": 9, \\\"production_quality\\\": 7, \\\"content_style\\\": \\\"Tutorial\\\", \\\"speaks_english\\\": true, \\\"overall_score\\\": 7.7, \\\"red_flags\\\": [], \\\"recommendation\\\": \\\"CONTACT_PRIORITY\\\", \\\"reasoning\\\": \\\"one sentence\\\"}\"\n  }]\n}",
+        "options": {}
+      },
+      "id": "claude1",
+      "name": "Claude Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1980, 180],
+      "credentials": {"httpHeaderAuth": {"id": "anthropic", "name": "Anthropic"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const profile = $('Filter Reels').item.json;\nconst claude = $input.first().json;\nlet a = {};\ntry { a = JSON.parse(claude.content[0].text); } catch(e) { a = {recommendation:'SKIP', reasoning:'Parse error'}; }\nreturn [{ json: {...profile, ...a} }];"
+      },
+      "id": "merge1",
+      "name": "Merge",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 180]
+    },
+    {
+      "parameters": {"operation": "insert", "tableId": "profiles", "dataToSend": "autoMapInputData"},
+      "id": "save1",
+      "name": "Save DB",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [2420, 180],
+      "credentials": {"supabaseApi": {"id": "supabase", "name": "Supabase"}}
+    },
+    {
+      "parameters": {
+        "conditions": {"options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"}, "conditions": [{"id": "p", "leftValue": "={{ $json.recommendation }}", "rightValue": "CONTACT_PRIORITY", "operator": {"type": "string", "operation": "equals"}}, {"id": "c", "leftValue": "={{ $json.recommendation }}", "rightValue": "CONTACT", "operator": {"type": "string", "operation": "equals"}}], "combinator": "or"},
+        "options": {}
+      },
+      "id": "ifApproved1",
+      "name": "Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2640, 180]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {"__rl": true, "mode": "list", "value": ""},
+        "sheetName": {"__rl": true, "mode": "list", "value": ""},
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Handle": "=@{{ $json.username }}",
+            "Followers": "={{ $json.followers }}",
+            "UGC Score": "={{ $json.overall_score }}",
+            "Voice": "={{ $json.voice_clarity }}",
+            "Audio": "={{ $json.audio_quality }}",
+            "Camera": "={{ $json.camera_comfort }}",
+            "Energy": "={{ $json.energy_level }}",
+            "Authenticity": "={{ $json.authenticity }}",
+            "Production": "={{ $json.production_quality }}",
+            "Style": "={{ $json.content_style }}",
+            "English": "={{ $json.speaks_english ? 'YES' : 'NO' }}",
+            "Talks": "={{ $json.talks_in_videos ? 'YES' : 'NO' }}",
+            "Source": "={{ $json.source_type }} ({{ $json.source }})",
+            "Reel 1": "={{ $json.reel_1_url }}",
+            "Reel 2": "={{ $json.reel_2_url }}",
+            "Reel 3": "={{ $json.reel_3_url }}",
+            "Red Flags": "={{ Array.isArray($json.red_flags) ? $json.red_flags.join(', ') : '' }}",
+            "Notes": "={{ $json.reasoning }}",
+            "Priority": "={{ $json.recommendation === 'CONTACT_PRIORITY' ? 'PRIORITY' : '' }}",
+            "Date": "={{ new Date().toISOString().split('T')[0] }}"
+          },
+          "matchingColumns": [], "schema": []
+        },
+        "options": {}
+      },
+      "id": "sheets1",
+      "name": "Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2860, 60],
+      "credentials": {"googleSheetsOAuth2Api": {"id": "gsheets", "name": "Google Sheets"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect approved username as seed for Phase 2\nconst profile = $('Merge').item.json;\nreturn [{ json: { seed: profile.username } }];"
+      },
+      "id": "collectSeed",
+      "name": "Collect Seed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3080, 60]
+    },
+    {
+      "parameters": {},
+      "id": "skip1",
+      "name": "Skip",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2860, 300]
+    },
+    {
+      "parameters": {},
+      "id": "exists1",
+      "name": "Exists",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1540, 420]
+    },
+    {
+      "parameters": {"aggregate": "aggregateAllItemData", "destinationFieldName": "seeds", "options": {}},
+      "id": "aggSeeds",
+      "name": "Aggregate Seeds",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [3300, 60],
+      "notesInFlow": true,
+      "notes": "Collects all approved profiles for Phase 2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst seeds = data.seeds || [];\nconst limit = $('Settings').first().json.similarLimit;\n\nif (seeds.length === 0) return [];\n\nreturn seeds.map(s => ({ json: { seed: s.seed, similarLimit: limit } }));"
+      },
+      "id": "prepSeeds",
+      "name": "Prep Seeds",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3520, 60]
+    },
+    {
+      "parameters": {"batchSize": 1, "options": {}},
+      "id": "loopSeeds",
+      "name": "Loop Seeds",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [3740, 60]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/apify~instagram-scraper/run-sync-get-dataset-items",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"usernames\": [\"{{ $json.seed }}\"],\n  \"resultsLimit\": {{ $json.similarLimit }},\n  \"resultsType\": \"similar\"\n}",
+        "options": {"timeout": 300000}
+      },
+      "id": "apifySimilar",
+      "name": "Apify: Similar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3960, 60],
+      "credentials": {"httpQueryAuth": {"id": "apify", "name": "Apify"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $input.all().map(i => i.json);\nconst seed = $('Loop Seeds').item.json.seed;\nconst settings = $('Settings').first().json;\nconst profiles = [];\n\nfor (const r of results) {\n  const similar = r.similarAccounts || r.relatedProfiles || [r];\n  for (const a of similar) {\n    const u = a.username || a.ownerUsername;\n    const f = a.followersCount || a.followers || 0;\n    if (!u || u === seed) continue;\n    if (f < settings.minFollowers || f > settings.maxFollowers) continue;\n    profiles.push({ username: u, followers: f, source: seed, sourceType: 'similar' });\n  }\n}\n\nreturn profiles.map(p => ({ json: p }));"
+      },
+      "id": "extractSimilar",
+      "name": "Extract Similar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4180, 60]
+    },
+    {
+      "parameters": {"aggregate": "aggregateAllItemData", "destinationFieldName": "allSimilar", "options": {}},
+      "id": "aggSimilar",
+      "name": "Aggregate Similar",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [4400, 60]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst all = data.allSimilar || [];\nconst unique = new Map();\nfor (const p of all) { if (p.username && !unique.has(p.username)) unique.set(p.username, p); }\nreturn Array.from(unique.values()).map(p => ({ json: p }));"
+      },
+      "id": "dedupe",
+      "name": "Dedupe",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4620, 60]
+    },
+    {
+      "parameters": {"batchSize": 1, "options": {}},
+      "id": "loop2",
+      "name": "Phase 2 Loop",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [4840, 60]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "tableId": "profiles",
+        "filterType": "string",
+        "filterString": "=username=eq.{{ $json.username }}"
+      },
+      "id": "check2",
+      "name": "Check DB 2",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [5060, 60],
+      "credentials": {"supabaseApi": {"id": "supabase", "name": "Supabase"}}
+    },
+    {
+      "parameters": {
+        "conditions": {"options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"}, "conditions": [{"id": "new", "leftValue": "={{ $json.length }}", "rightValue": "0", "operator": {"type": "number", "operation": "equals"}}], "combinator": "and"},
+        "options": {}
+      },
+      "id": "ifNew2",
+      "name": "New? 2",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [5280, 60]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/apify~instagram-scraper/run-sync-get-dataset-items",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"usernames\": [\"{{ $('Phase 2 Loop').item.json.username }}\"],\n  \"resultsLimit\": 30,\n  \"resultsType\": \"posts\"\n}",
+        "options": {"timeout": 300000}
+      },
+      "id": "apify-profile2",
+      "name": "Apify: Profile 2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [5500, -60],
+      "credentials": {"httpQueryAuth": {"id": "apify", "name": "Apify"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst posts = data.latestPosts || data.posts || [];\nconst profile = $('Phase 2 Loop').item.json;\n\nconst reels = posts.filter(p => {\n  const dur = p.videoDuration || 0;\n  const type = (p.type || p.productType || '').toLowerCase();\n  return (type.includes('video') || type.includes('reel')) && dur >= 15 && dur <= 90;\n});\n\nif (reels.length < 3) return [];\n\nreels.sort((a, b) => ((b.likesCount||0) + (b.commentsCount||0)) - ((a.likesCount||0) + (a.commentsCount||0)));\n\nconst top3 = reels.slice(0, 3).map((r, i) => ({\n  url: r.url || `https://instagram.com/reel/${r.shortCode}`,\n  likes: r.likesCount || 0,\n  caption: (r.caption || '').substring(0, 300)\n}));\n\nreturn [{ json: {\n  username: profile.username,\n  followers: data.followersCount || profile.followers,\n  bio: (data.biography || '').substring(0, 500),\n  source: profile.source,\n  source_type: profile.sourceType,\n  reel_1_url: top3[0].url, reel_1_likes: top3[0].likes, reel_1_caption: top3[0].caption,\n  reel_2_url: top3[1].url, reel_2_likes: top3[1].likes, reel_2_caption: top3[1].caption,\n  reel_3_url: top3[2].url, reel_3_likes: top3[2].likes, reel_3_caption: top3[2].caption,\n  avg_duration: Math.round(reels.slice(0,3).reduce((s,r) => s + (r.videoDuration||0), 0) / 3)\n}}];"
+      },
+      "id": "filter2",
+      "name": "Filter Reels 2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [5720, -60]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "x-api-key", "value": "={{$credentials.httpHeaderAuth.value}}"}, {"name": "anthropic-version", "value": "2023-06-01"}, {"name": "content-type", "value": "application/json"}]},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 1024,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"# UGC CREATOR ANALYSIS FOR 21DRAW\\n\\n## Profile:\\n- Username: {{ $json.username }}\\n- Followers: {{ $json.followers }}\\n- Bio: {{ $json.bio }}\\n- Source: {{ $json.source_type }} (similar to @{{ $json.source }})\\n\\n## Top 3 Reels:\\n1. {{ $json.reel_1_url }} ({{ $json.reel_1_likes }} likes) - {{ $json.reel_1_caption }}\\n2. {{ $json.reel_2_url }} ({{ $json.reel_2_likes }} likes) - {{ $json.reel_2_caption }}\\n3. {{ $json.reel_3_url }} ({{ $json.reel_3_likes }} likes) - {{ $json.reel_3_caption }}\\n\\n## ANALYZE:\\n\\n### A. CRITICAL - TALKS IN VIDEOS? (YES/NO)\\nDoes this person speak in their videos? Music-only or text-overlay = NO. Must have actual voice = YES.\\nIF NO → Return recommendation SKIP immediately.\\n\\n### B. Score each 1-10:\\n- voice_clarity, audio_quality, tone_stability, camera_comfort, energy_level, authenticity, production_quality\\n\\n### C. Content style: Tutorial / Review / Entertainment / Inspiration\\n\\n### D. speaks_english: YES/NO\\n\\n### E. Red flags: competing courses, fake followers, inappropriate, controversial, inactive 30+ days\\n\\n### F. Recommendation: CONTACT_PRIORITY / CONTACT / SKIP\\n\\n## RESPOND ONLY WITH THIS JSON:\\n{\\\"talks_in_videos\\\": true, \\\"voice_clarity\\\": 8, \\\"audio_quality\\\": 7, \\\"tone_stability\\\": 8, \\\"camera_comfort\\\": 8, \\\"energy_level\\\": 7, \\\"authenticity\\\": 9, \\\"production_quality\\\": 7, \\\"content_style\\\": \\\"Tutorial\\\", \\\"speaks_english\\\": true, \\\"overall_score\\\": 7.7, \\\"red_flags\\\": [], \\\"recommendation\\\": \\\"CONTACT_PRIORITY\\\", \\\"reasoning\\\": \\\"one sentence\\\"}\"\n  }]\n}",
+        "options": {}
+      },
+      "id": "claude2",
+      "name": "Claude 2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [5940, -60],
+      "credentials": {"httpHeaderAuth": {"id": "anthropic", "name": "Anthropic"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const profile = $('Filter Reels 2').item.json;\nconst claude = $input.first().json;\nlet a = {};\ntry { a = JSON.parse(claude.content[0].text); } catch(e) { a = {recommendation:'SKIP', reasoning:'Parse error'}; }\nreturn [{ json: {...profile, ...a} }];"
+      },
+      "id": "merge2",
+      "name": "Merge 2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [6160, -60]
+    },
+    {
+      "parameters": {"operation": "insert", "tableId": "profiles", "dataToSend": "autoMapInputData"},
+      "id": "save2",
+      "name": "Save DB 2",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [6380, -60],
+      "credentials": {"supabaseApi": {"id": "supabase", "name": "Supabase"}}
+    },
+    {
+      "parameters": {
+        "conditions": {"options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"}, "conditions": [{"id": "p", "leftValue": "={{ $json.recommendation }}", "rightValue": "CONTACT_PRIORITY", "operator": {"type": "string", "operation": "equals"}}, {"id": "c", "leftValue": "={{ $json.recommendation }}", "rightValue": "CONTACT", "operator": {"type": "string", "operation": "equals"}}], "combinator": "or"},
+        "options": {}
+      },
+      "id": "ifApproved2",
+      "name": "Approved? 2",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [6600, -60]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {"__rl": true, "mode": "list", "value": ""},
+        "sheetName": {"__rl": true, "mode": "list", "value": ""},
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Handle": "=@{{ $json.username }}",
+            "Followers": "={{ $json.followers }}",
+            "UGC Score": "={{ $json.overall_score }}",
+            "Voice": "={{ $json.voice_clarity }}",
+            "Audio": "={{ $json.audio_quality }}",
+            "Camera": "={{ $json.camera_comfort }}",
+            "Energy": "={{ $json.energy_level }}",
+            "Authenticity": "={{ $json.authenticity }}",
+            "Production": "={{ $json.production_quality }}",
+            "Style": "={{ $json.content_style }}",
+            "English": "={{ $json.speaks_english ? 'YES' : 'NO' }}",
+            "Talks": "={{ $json.talks_in_videos ? 'YES' : 'NO' }}",
+            "Source": "={{ $json.source_type }} ({{ $json.source }})",
+            "Reel 1": "={{ $json.reel_1_url }}",
+            "Reel 2": "={{ $json.reel_2_url }}",
+            "Reel 3": "={{ $json.reel_3_url }}",
+            "Red Flags": "={{ Array.isArray($json.red_flags) ? $json.red_flags.join(', ') : '' }}",
+            "Notes": "={{ $json.reasoning }}",
+            "Priority": "={{ $json.recommendation === 'CONTACT_PRIORITY' ? 'PRIORITY' : '' }}",
+            "Date": "={{ new Date().toISOString().split('T')[0] }}"
+          },
+          "matchingColumns": [], "schema": []
+        },
+        "options": {}
+      },
+      "id": "sheets2",
+      "name": "Sheets 2",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [6820, -180],
+      "credentials": {"googleSheetsOAuth2Api": {"id": "gsheets", "name": "Google Sheets"}}
+    },
+    {
+      "parameters": {},
+      "id": "skip2",
+      "name": "Skip 2",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [6820, 60]
+    },
+    {
+      "parameters": {},
+      "id": "exists2",
+      "name": "Exists 2",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [5500, 180]
+    },
+    {
+      "parameters": {},
+      "id": "done",
+      "name": "Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [7040, -60],
+      "notesInFlow": true,
+      "notes": "Workflow complete!"
+    }
+  ],
+  "connections": {
+    "Start": {"main": [[{"node": "Settings", "type": "main", "index": 0}]]},
+    "Settings": {"main": [[{"node": "Apify: Tagged Posts", "type": "main", "index": 0}]]},
+    "Apify: Tagged Posts": {"main": [[{"node": "Extract Profiles", "type": "main", "index": 0}]]},
+    "Extract Profiles": {"main": [[{"node": "Phase 1 Loop", "type": "main", "index": 0}]]},
+    "Phase 1 Loop": {"main": [[{"node": "Check DB", "type": "main", "index": 0}], [{"node": "Aggregate Seeds", "type": "main", "index": 0}]]},
+    "Check DB": {"main": [[{"node": "New?", "type": "main", "index": 0}]]},
+    "New?": {"main": [[{"node": "Apify: Profile", "type": "main", "index": 0}], [{"node": "Exists", "type": "main", "index": 0}]]},
+    "Apify: Profile": {"main": [[{"node": "Filter Reels", "type": "main", "index": 0}]]},
+    "Filter Reels": {"main": [[{"node": "Claude Analysis", "type": "main", "index": 0}]]},
+    "Claude Analysis": {"main": [[{"node": "Merge", "type": "main", "index": 0}]]},
+    "Merge": {"main": [[{"node": "Save DB", "type": "main", "index": 0}]]},
+    "Save DB": {"main": [[{"node": "Approved?", "type": "main", "index": 0}]]},
+    "Approved?": {"main": [[{"node": "Sheets", "type": "main", "index": 0}], [{"node": "Skip", "type": "main", "index": 0}]]},
+    "Sheets": {"main": [[{"node": "Collect Seed", "type": "main", "index": 0}]]},
+    "Collect Seed": {"main": [[{"node": "Phase 1 Loop", "type": "main", "index": 0}]]},
+    "Skip": {"main": [[{"node": "Phase 1 Loop", "type": "main", "index": 0}]]},
+    "Exists": {"main": [[{"node": "Phase 1 Loop", "type": "main", "index": 0}]]},
+    "Aggregate Seeds": {"main": [[{"node": "Prep Seeds", "type": "main", "index": 0}]]},
+    "Prep Seeds": {"main": [[{"node": "Loop Seeds", "type": "main", "index": 0}]]},
+    "Loop Seeds": {"main": [[{"node": "Apify: Similar", "type": "main", "index": 0}], [{"node": "Aggregate Similar", "type": "main", "index": 0}]]},
+    "Apify: Similar": {"main": [[{"node": "Extract Similar", "type": "main", "index": 0}]]},
+    "Extract Similar": {"main": [[{"node": "Loop Seeds", "type": "main", "index": 0}]]},
+    "Aggregate Similar": {"main": [[{"node": "Dedupe", "type": "main", "index": 0}]]},
+    "Dedupe": {"main": [[{"node": "Phase 2 Loop", "type": "main", "index": 0}]]},
+    "Phase 2 Loop": {"main": [[{"node": "Check DB 2", "type": "main", "index": 0}], [{"node": "Done", "type": "main", "index": 0}]]},
+    "Check DB 2": {"main": [[{"node": "New? 2", "type": "main", "index": 0}]]},
+    "New? 2": {"main": [[{"node": "Apify: Profile 2", "type": "main", "index": 0}], [{"node": "Exists 2", "type": "main", "index": 0}]]},
+    "Apify: Profile 2": {"main": [[{"node": "Filter Reels 2", "type": "main", "index": 0}]]},
+    "Filter Reels 2": {"main": [[{"node": "Claude 2", "type": "main", "index": 0}]]},
+    "Claude 2": {"main": [[{"node": "Merge 2", "type": "main", "index": 0}]]},
+    "Merge 2": {"main": [[{"node": "Save DB 2", "type": "main", "index": 0}]]},
+    "Save DB 2": {"main": [[{"node": "Approved? 2", "type": "main", "index": 0}]]},
+    "Approved? 2": {"main": [[{"node": "Sheets 2", "type": "main", "index": 0}], [{"node": "Skip 2", "type": "main", "index": 0}]]},
+    "Sheets 2": {"main": [[{"node": "Phase 2 Loop", "type": "main", "index": 0}]]},
+    "Skip 2": {"main": [[{"node": "Phase 2 Loop", "type": "main", "index": 0}]]},
+    "Exists 2": {"main": [[{"node": "Phase 2 Loop", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "staticData": null,
+  "meta": {"instanceId": "ugc-finder"},
+  "pinData": {},
+  "tags": []
+}
