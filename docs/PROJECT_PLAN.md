@@ -38,10 +38,10 @@ Status flow: NEW → ENRICHED → ANALYZED → VIDEO_ANALYZED → OUTREACH_READY
 
 ## Phase 1A: Stabilize (Week 1, Day 1)
 
-- [ ] Re-enable Supabase "Save DB" node
-- [ ] Add status column to profiles table
-- [ ] Create ai_logs table in Supabase
-- [ ] Test run with 5 existing creators
+- [x ] Re-enable Supabase "Save DB" node
+- [ x] Add status column to profiles table
+- [x ] Create ai_logs table in Supabase
+- [x ] Test run with 5 existing creators
 - [ ] Add 2 more competitors to Settings1
 
 ## Phase 1B: Split Workflows (Week 1, Day 2)
@@ -53,7 +53,7 @@ Status flow: NEW → ENRICHED → ANALYZED → VIDEO_ANALYZED → OUTREACH_READY
 
 ## Workflow Export Checklist
 
-After completing each workflow, export and save:
+After completing each workflow, export and save (will skip til its needed in a later stage):
 - [ ] Export WF1 from n8n → save as `workflows/wf1-data-fetch.json`
 - [ ] Export WF2 from n8n → save as `workflows/wf2-enrichment.json`
 - [ ] Export WF3 from n8n → save as `workflows/wf3-ai-analysis.json`
