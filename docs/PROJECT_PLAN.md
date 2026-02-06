@@ -44,6 +44,13 @@ Status flow: NEW → ENRICHED → ANALYZED → VIDEO_ANALYZED → OUTREACH_READY
 - [x ] Test run with 5 existing creators
 - [ ] Add 2 more competitors to Settings1
 
+## Phase 1B: Organize Workflow (Week 1, Day 2)
+
+- [x] Add stage sticky notes to workflow (Data Fetch, Enrichment, AI Analysis, Save)
+- [x] Remove Google Sheets nodes
+- [x] Clean up unused AI Agent/Gemini nodes
+- [x] Export and save workflow to git
+
 ## Phase 1B: Split Workflows (Week 1, Day 2)
 
 - [ ] Create WF1-Data-Fetch workflow
@@ -53,7 +60,7 @@ Status flow: NEW → ENRICHED → ANALYZED → VIDEO_ANALYZED → OUTREACH_READY
 
 ## Workflow Export Checklist
 
-After completing each workflow, export and save (will skip til its needed in a later stage):
+After completing each workflow, export and save (will skip til its needed in a later stage), have added sticky notes to current workflow:
 - [ ] Export WF1 from n8n → save as `workflows/wf1-data-fetch.json`
 - [ ] Export WF2 from n8n → save as `workflows/wf2-enrichment.json`
 - [ ] Export WF3 from n8n → save as `workflows/wf3-ai-analysis.json`
