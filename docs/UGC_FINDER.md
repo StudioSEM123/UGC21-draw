@@ -6,7 +6,7 @@
 
 ## Overview
 
-Automated Instagram creator discovery pipeline for 21Draw (online art education platform). Scrapes competitor-tagged posts, fetches full creator profiles via Apify, analyzes them with Claude AI, and stores approved UGC candidates in Supabase + Google Sheets.
+Automated Instagram creator discovery pipeline for 21Draw (online art education platform). Scrapes competitor-tagged posts, fetches full creator profiles via Apify, analyzes them with Claude AI, and stores approved UGC candidates in Supabase.
 
 **Goal:** Find art creators who are a good fit for UGC partnerships with 21Draw by analyzing their Instagram presence, engagement metrics, and reel content.
 
@@ -414,47 +414,16 @@ The sheet receives all fields from the Merge node. Columns include:
 
 ## Supabase Schema
 
-```sql
--- Single table for all profile data including reels
-CREATE TABLE profiles (
-    id SERIAL PRIMARY KEY,
-    username VARCHAR(100) NOT NULL UNIQUE,
-    followers INTEGER,
-    bio TEXT,
-    source VARCHAR(100),          -- competitor or seed username
-    source_type VARCHAR(50),      -- 'tagged' or 'similar'
+See full schema at `21draw-ugc-pipeline/database/schema.sql` (52 columns).
 
-    -- Top 3 reels (stored in same table)
-    reel_1_url TEXT,
-    reel_1_likes INTEGER,
-    reel_1_caption TEXT,
-    reel_2_url TEXT,
-    reel_2_likes INTEGER,
-    reel_2_caption TEXT,
-    reel_3_url TEXT,
-    reel_3_likes INTEGER,
-    reel_3_caption TEXT,
-    avg_duration INTEGER,
-
-    -- Analysis fields
-    engagement_rate DECIMAL(5,2),
-    avg_likes INTEGER,
-    avg_comments INTEGER,
-    has_art_content BOOLEAN DEFAULT false,
-    verified BOOLEAN DEFAULT false,
-    business_category VARCHAR(100),
-    niche_relevance INTEGER,
-    profile_score INTEGER,
-    recommendation VARCHAR(50),
-    reasoning TEXT,
-    status VARCHAR(50) DEFAULT 'PENDING_REVIEW',
-    analyzed_at TIMESTAMP WITH TIME ZONE,
-
-    -- Timestamps
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-```
+Key column groups:
+- **Identity:** id, username, status, verified
+- **Source:** source, source_type
+- **Profile metrics:** followers, engagement_rate, bio, has_art_content, avg_likes, avg_comments
+- **WF3 Claude analysis:** niche_relevance, profile_score, recommendation, reasoning, content_style
+- **WF4 Gemini video analysis:** talks_in_videos, speaks_english, voice_potential, teaching_potential, brand_fit, production_quality, overall_ugc_score, video_recommendation, ugc_reasoning, next_steps, audio_description, speech_quote, videos_with_speech
+- **Reel data:** reel_1-3 (url, post_url, likes, comments, duration, caption), avg_duration, total_reels_found
+- **Manual review:** manual_review_notes
 
 ---
 
@@ -501,6 +470,11 @@ CREATE TABLE profiles (
 ---
 
 ## Changelog
+
+### v1.2 — February 10, 2026
+- **Database cleanup:** Dropped 15 unused columns from profiles table (audience_fit, audio_quality, authenticity, business_category, camera_comfort, content_consistency, content_themes, energy_level, engagement_quality, red_flags, source_competitor, tone_stability, top_hashtags, total_qualifying_reels, voice_clarity). Table reduced from 67 to 52 columns.
+- **Added profile_overview view:** Organized view grouping columns by pipeline stage
+- **Schema files reconciled:** Single source of truth at `21draw-ugc-pipeline/database/schema.sql`
 
 ### v1.1 — February 4, 2026
 - **Filter Reels node rewritten:** Now extracts reels from `latestPosts` array, calculates engagement_rate, gets top 3 reel URLs with likes/comments/captions

@@ -1,55 +1,58 @@
 # UGC Finder for 21Draw
 
-## What is this?
-An automated two-phase system to find quality UGC creators for 21Draw.
+Automated pipeline to discover and evaluate Instagram creators for UGC partnerships with 21Draw (online art education platform).
 
-## Method
-**Phase 1:** Find creators who tagged competitor accounts (e.g., @proko)
-**Phase 2:** Find similar accounts to approved Phase 1 creators
+## How It Works
+
+**Phase 1 — Discovery + Profile Analysis:**
+1. Scrape posts tagging competitor accounts (domestika, schoolismlive, etc.)
+2. Fetch full profiles via Apify (followers, bio, reels)
+3. Filter by followers (2k-150k) and qualifying video content (15-90s reels)
+4. Claude AI evaluates profile fit → COLLABORATE / REVIEW / PASS / REJECT
+5. Save to Supabase
+
+**Phase 2 — Video Analysis:**
+1. Download top 3 reels per profile
+2. Upload to Gemini Files API
+3. Gemini analyzes speech, teaching ability, production quality
+4. Save video scores to Supabase → status VIDEO_ANALYZED
 
 ## Tech Stack
-- **N8N** - Workflow automation (37 nodes)
-- **Apify** - Instagram scraping (sync API)
-- **Supabase** - Database (profiles table with reels)
-- **Claude API** - AI analysis with 8 detailed scores
-- **Google Sheets** - Output for approved candidates
+- **n8n** — Workflow automation (self-hosted on Hostinger VPS)
+- **Apify** — Instagram scraping
+- **Claude API** — Profile analysis (Phase 1)
+- **Gemini** — Video analysis with actual video files (Phase 2)
+- **Supabase** — PostgreSQL database (52 columns, 3 tables)
 
-## How it works
-1. Scrape posts tagging @proko (or configured competitor)
-2. Filter by followers (5k-100k)
-3. Fetch profiles + filter for videos 15-90 seconds
-4. Skip profiles with < 3 qualifying videos
-5. Claude analyzes: talks in videos, 8 scores, English, red flags
-6. Save all to Supabase, export approved to Google Sheets
-7. **Phase 2:** Use approved profiles as seeds to find similar accounts
-8. Repeat analysis for similar accounts
-
-## Expected output per run
-- **Phase 1:** ~5-8 approved from ~100 tagged posts
-- **Phase 2:** ~10-15 approved from ~180 similar accounts
-- **Total:** ~15-23 quality candidates
-- **Cost:** ~$2.65 per run
+## Current Competitors
+domestika, schoolismlive, storyboardart_org, easy_drawing_ideas__, pix_bun
 
 ## Setup
-1. Import `workflows/n8n-workflow.json` into N8N
-2. Configure credentials in N8N:
-   - HTTP Query Auth (Apify token)
-   - Supabase
-   - HTTP Header Auth (Anthropic API key)
-   - Google Sheets OAuth2
-3. Create profiles table in Supabase (see docs)
-4. Create Google Sheet with columns (see docs)
-5. Run!
+1. Import the workflow JSON into n8n
+2. Run `21draw-ugc-pipeline/database/schema.sql` in Supabase
+3. Configure API keys in n8n credentials (Apify, Anthropic, Gemini, Supabase)
+4. Run Phase 1 to discover creators, then Phase 2 for video analysis
+
+## Project Structure
+```
+docs/                      # Project documentation
+  UGC_FINDER.md            # Full workflow reference
+  PROJECT_PLAN.md          # Master project plan
+  supabase_schema.sql      # Quick reference schema
+prompts/                   # AI prompt templates
+  claude-profile-analysis.md
+  gemini-video-analysis.md
+workflows/                 # n8n workflow exports
+scripts/                   # Utility and audit scripts
+  audit/                   # Hallucination detection
+  utils/                   # DB utilities
+21draw-ugc-pipeline/       # Pipeline code and config
+  code-nodes/              # JavaScript for n8n Code nodes
+  database/                # Schema and queries
+  docs/                    # Pipeline-specific docs
+  prompts/                 # Pipeline-specific prompts
+  workflows/               # Pipeline workflow exports
+```
 
 ## Documentation
-See `docs/UGC_FINDER.md` for complete project documentation including:
-- Full workflow architecture diagram
-- Supabase schema with SQL
-- Claude analysis prompt
-- Google Sheets column structure
-- Cost breakdown
-
-## Files
-- `docs/UGC_FINDER.md` - Full documentation
-- `workflows/n8n-workflow.json` - Importable N8N workflow
-- `.env.example` - Template for API keys (optional reference)
+See `docs/UGC_FINDER.md` for the complete node-by-node workflow reference.

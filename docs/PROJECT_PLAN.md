@@ -1,6 +1,6 @@
 # 21Draw UGC Creator Discovery — Master Project Plan
 
-### v1.0 — February 2026
+### v1.2 — February 2026
 ### Owner: Noras Shante | Client: 21Draw (Renco Smeding)
 
 ---
@@ -16,136 +16,95 @@ Upload this file to a new Claude.ai chat and say: "Continue from Phase X, Task Y
 **What we're building:** An automated pipeline that discovers, analyzes, and qualifies Instagram creators for UGC partnerships with 21Draw, an online art education platform.
 
 **The end-to-end funnel:**
-Find Creators → Scrape Profiles → Analyze with AI → Analyze Videos → Score & Rank → Personalize Outreach → Send → Track Replies
+Find Creators → Scrape Profiles → Analyze with Claude AI → Analyze Videos with Gemini → Score & Rank → Outreach
 
-**Current state:** Working n8n workflow that scrapes prokotv tagged posts, enriches profiles via Apify, analyzes with Claude AI, saves to Google Sheets. Supabase node is disabled.
-
-**Next steps:** Re-enable Supabase, split into layered workflows, add Gemini Pro video analysis.
+**Current state:** Combined n8n workflow with Phase 1 (discovery + Claude analysis) and Phase 2 (Gemini video analysis). Running on Hostinger VPS. Supabase as database. 24 profiles processed, 20 with full video analysis.
 
 ---
 
-## Target Architecture (Per Renco)
+## Target Architecture
+
+Currently running as a single combined workflow. Future goal is to split into layered workflows:
 
 WF1-Data-Fetch: Scrape competitor tags → save NEW profiles to Supabase
-WF2-Enrichment: Full profile scrape → extract reels → save ENRICHED  
+WF2-Enrichment: Full profile scrape → extract reels → save ENRICHED
 WF3-AI-Analysis: Claude analysis → save ANALYZED + log to ai_logs
-WF4-Video-Analysis: Gemini Pro video eval → save VIDEO_ANALYZED + log
+WF4-Video-Analysis: Gemini video eval → save VIDEO_ANALYZED + log
 WF5-Audit: Cross-check AI outputs for hallucinations
 
 Status flow: NEW → ENRICHED → ANALYZED → VIDEO_ANALYZED → OUTREACH_READY
 
 ---
 
-## Phase 1A: Stabilize (Week 1, Day 1)
+## Current Competitors (Settings1 node)
 
-- [x ] Re-enable Supabase "Save DB" node
-- [ x] Add status column to profiles table
-- [x ] Create ai_logs table in Supabase
-- [x ] Test run with 5 existing creators
-- [ ] Add 2 more competitors to Settings1
+- domestika
+- schoolismlive
+- storyboardart_org
+- easy_drawing_ideas__
+- pix_bun
 
-## Phase 1B: Organize Workflow (Week 1, Day 2)
+Settings: 2k-150k followers, 100 results limit
 
-- [x] Add stage sticky notes to workflow (Data Fetch, Enrichment, AI Analysis, Save)
-- [x] Remove Google Sheets nodes
-- [x] Clean up unused AI Agent/Gemini nodes
+---
+
+## Phase 1A: Stabilize — DONE
+
+- [x] Re-enable Supabase "Save DB" node
+- [x] Add status column to profiles table
+- [x] Create ai_logs table in Supabase
+- [x] Test run with existing creators
+- [x] Updated competitors list (5 accounts)
+
+## Phase 1B: Organize Workflow — DONE
+
+- [x] Add stage sticky notes to workflow
+- [x] Clean up unused nodes
 - [x] Export and save workflow to git
 
-## Phase 1B: Split Workflows (Week 1, Day 2)
+## Phase 2: Video Analysis — DONE
+
+- [x] Create Gemini API key
+- [x] Build video analysis (download reels → upload to Gemini → analyze)
+- [x] Test on creators
+- [x] Add logging for Gemini calls to ai_logs
+
+## Phase 2B: Database Cleanup — DONE
+
+- [x] Drop 15 unused columns from profiles table (67 → 52)
+- [x] Create profile_overview view
+- [x] Reconcile schema files
+- [x] Update all documentation
+
+## Phase 3: Split Workflows — TODO
 
 - [ ] Create WF1-Data-Fetch workflow
-- [ ] Create WF2-Enrichment workflow  
+- [ ] Create WF2-Enrichment workflow
 - [ ] Create WF3-AI-Analysis workflow with logging
+- [ ] Create WF4-Video-Analysis workflow
 - [ ] Test each independently
+
+## Phase 4: Audit System — TODO
+
+- [ ] Create audit_results table
+- [ ] Build audit script/workflow (WF5)
+- [ ] Run first audit on existing 24 profiles
+
+## Phase 5: Outreach — TODO
+
+- [ ] Automatic outreach email generation
+- [ ] Integration with CRM
+- [ ] Dashboard for reviewing candidates
+
+---
 
 ## Workflow Export Checklist
 
-After completing each workflow, export and save (will skip til its needed in a later stage), have added sticky notes to current workflow:
-- [ ] Export WF1 from n8n → save as `workflows/wf1-data-fetch.json`
-- [ ] Export WF2 from n8n → save as `workflows/wf2-enrichment.json`
-- [ ] Export WF3 from n8n → save as `workflows/wf3-ai-analysis.json`
-- [ ] Export WF4 from n8n → save as `workflows/wf4-video-analysis.json`
-
-**How to export:** In n8n, open the workflow → click the three dots menu (top right) → Download → saves as JSON
-```
-
-Or I can give you a command to append it — let me know.
-
----
-
-## Question 5: How to export and commit to git
-
-**Step 1 — Export from n8n:**
-1. Open your workflow in n8n (in browser)
-2. Click the three dots `⋯` in the top right corner
-3. Click "Download"
-4. It downloads a `.json` file to your Downloads folder
-
-**Step 2 — Move to your project:**
-```
-cp ~/Downloads/your-workflow-name.json workflows/wf1-data-fetch.json
-```
-
-**Step 3 — Commit to git:**
-```
-git add workflows/wf1-data-fetch.json
-git commit -m "Add WF1 data fetch workflow"
-git push
-```
-
-**Why this matters:** Git keeps history. If you break something next week, you can go back to today's working version. It's your undo button.
-
----
-
-## Question 6: Checking if Claude Code is installed
-
-Claude Code is different from the Claude.ai website you're using right now. It's a separate command-line tool. Let's check if you have it:
-
-Run this in your terminal:
-```
-claude --version
-
-## Phase 2: Video Analysis (Week 2)
-
-- [ ] Create Gemini Pro API key at aistudio.google.com
-- [ ] Build WF4-Video-Analysis workflow
-- [ ] Test on 5 creators
-- [ ] Add logging for Gemini calls
-
-## Phase 3: Audit System (Week 3)
-
-- [ ] Create audit_results table
-- [ ] Build audit script/workflow
-- [ ] Run first audit
-
----
-
-## Database Tables Needed
-
-### profiles table — add columns:
-- status (text): NEW, ENRICHED, ANALYZED, VIDEO_ANALYZED
-- instagram_url (text): https://instagram.com/{username}
-
-### ai_logs table — create new:
-- id (serial)
-- profile_username (text)
-- workflow_name (text)
-- model_used (text)
-- prompt_sent (text)
-- input_data (jsonb)
-- output_raw (text)
-- output_parsed (jsonb)
-- created_at (timestamptz)
-- audit_status (text)
-
----
-
-## Competitors to Scrape
-
-- prokotv (current)
-- drawlikeasir
-- sinixdesign
-- marcobucci
+After splitting into separate workflows:
+- [ ] Export WF1 → `workflows/wf1-data-fetch.json`
+- [ ] Export WF2 → `workflows/wf2-enrichment.json`
+- [ ] Export WF3 → `workflows/wf3-ai-analysis.json`
+- [ ] Export WF4 → `workflows/wf4-video-analysis.json`
 
 ---
 
@@ -155,17 +114,4 @@ claude --version
 
 ---
 
-Last updated: February 5, 2026
-
-
----
-
-## Workflow Export Checklist
-
-After completing each workflow, export and save:
-- [ ] Export WF1 from n8n → save as workflows/wf1-data-fetch.json
-- [ ] Export WF2 from n8n → save as workflows/wf2-enrichment.json
-- [ ] Export WF3 from n8n → save as workflows/wf3-ai-analysis.json
-- [ ] Export WF4 from n8n → save as workflows/wf4-video-analysis.json
-
-How to export: In n8n, open workflow → click three dots menu (top right) → Download
+Last updated: February 10, 2026

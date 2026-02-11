@@ -19,7 +19,6 @@ Avg Likes: {avg_likes}
 Avg Comments: {avg_comments}
 Bio: {bio}
 Verified: {verified}
-Business Category: {business_category}
 Total Reels Found: {total_reels_found}
 
 TOP REELS:

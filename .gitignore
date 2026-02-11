@@ -1,12 +1,5 @@
-# Secret files - NEVER upload to GitHub
+.mcp.json
 .env
-
-# System files
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-
-# Node modules (if you ever use them)
 node_modules/
+.DS_Store
+scripts/data/
