@@ -4,7 +4,7 @@
 const https = require('https');
 
 const MODEL = 'claude-sonnet-4-5-20250929';
-const PROMPT_VERSION = 4;
+const PROMPT_VERSION = 5;
 
 function callClaude(prompt, apiKey) {
   return new Promise((resolve, reject) => {
@@ -115,8 +115,9 @@ Gemini Video Analysis:
    - TIER_2: Strong for one role, decent for the other
    - TIER_3: Approved but better suited for only one role`;
     messageInstructions = `Write TWO sets of outreach messages:
-a) UGC DM + email — about creating paid promotional content for 21Draw
-b) Teaching DM + email — about teaching an online course for 21Draw's 2M+ students. This is a significant paid opportunity with upfront payment + ongoing royalties. 21Draw handles all production.`;
+a) UGC DM + email — about creating paid content for 21Draw
+b) Teaching DM + email — about teaching a paid course for 21Draw
+Keep DMs general and short. Save details for emails.`;
     jsonFormat = `{
   "contact_email": "email@example.com or null",
   "contact_method": "EMAIL/DM/BOTH",
@@ -133,25 +134,23 @@ b) Teaching DM + email — about teaching an online course for 21Draw's 2M+ stud
     examples = `
 EXAMPLE (BOTH, UGC + Teacher):
 {
-  "dm_message": "Saw your gouache landscapes and the way you explain color mixing is so clear. I'm Noras at 21Draw, we're an online art school with 2M students. We pay artists to create content for us and thought you'd be perfect. Can I tell you more?",
+  "dm_message": "Hey, love your work. I'm Noras from 21Draw, we're an online art school. We're looking for artists to create paid content for us. Interested?",
   "email_subject": "Paid content collab with 21Draw",
-  "email_body": "Hi,\\n\\nI'm Noras from 21Draw. Found your work on Instagram and love your painting tutorials.\\n\\nWe're an online art school (2M+ students, courses by Disney/Marvel pros) and we're looking for artists to create paid promo content. Your teaching style and audience would be a great fit.\\n\\nHappy to share more details if you're interested.\\n\\nNoras\\n21Draw",
-  "teacher_dm_message": "Your gouache tutorials are seriously good. I'm at 21Draw, we have 2M+ students taking courses from industry pros. We're looking for artists to teach paid courses on our platform, we handle all the production. Think it could be a good fit for you. Open to chatting?",
+  "email_body": "Hi,\\n\\nI'm Noras from 21Draw, an online art school with 2M+ students and courses taught by Disney and Marvel pros.\\n\\nWe pay artists to create promotional content for our platform. Your work and audience would be a great match.\\n\\nHappy to share details if you're interested.\\n\\nNoras\\n21Draw",
+  "teacher_dm_message": "Hey, your stuff is great. I'm Noras from 21Draw, we're an online art school. We're looking for artists to teach paid courses on our platform. Open to chatting?",
   "teacher_email_subject": "Teaching opportunity at 21Draw",
-  "teacher_email_body": "Hi,\\n\\nI'm Noras from 21Draw. We're an online art education platform with 2M+ students and instructors from Disney, Marvel, and DreamWorks.\\n\\nWe're looking for talented artists to teach courses. You get paid upfront plus ongoing royalties, and we handle all filming and production. Your painting tutorials show exactly the kind of teaching ability our students need.\\n\\nWould love to tell you more.\\n\\nNoras\\n21Draw"
+  "teacher_email_body": "Hi,\\n\\nI'm Noras from 21Draw. We're an online art school with 2M+ students and instructors from Disney, Marvel, and DreamWorks.\\n\\nWe're looking for artists to teach courses. You get paid upfront plus ongoing royalties, and we handle all filming and production.\\n\\nWould love to tell you more.\\n\\nNoras\\n21Draw"
 }`;
   } else if (isTeacher) {
     roleContext = 'This creator is flagged as a potential Course Teacher for 21Draw.';
     tierDefs = `   - TIER_1: Professional artist with clear teaching ability, strong portfolio, English speaker
    - TIER_2: Good artist but teaching ability uncertain (no speaking in videos, unclear language)
    - TIER_3: Interesting artist but may not be ready to teach a full course`;
-    messageInstructions = `Write outreach about teaching an online art course for 21Draw's 2M+ students.
-Key selling points:
-- Significant upfront payment + ongoing royalties from course sales
-- 21Draw handles ALL production (filming, editing, platform hosting)
-- Join a roster of Disney, Marvel, and DreamWorks alumni
-- Courses cover: character design, concept art, digital illustration, comic art, traditional painting, anatomy, figure drawing
-- Mention their specific art expertise and how it fits`;
+    messageInstructions = `Write outreach about teaching an online art course for 21Draw.
+Key points:
+- Paid opportunity with upfront payment + ongoing royalties
+- 21Draw handles all production
+- Keep the DM general and short. Save details for the email.`;
     jsonFormat = `{
   "contact_email": "email@example.com or null",
   "contact_method": "EMAIL/DM/BOTH",
@@ -165,9 +164,9 @@ Key selling points:
     examples = `
 EXAMPLE (Course Teacher):
 {
-  "dm_message": "Been following your storyboard work for a bit, your process breakdowns are really helpful. I'm at 21Draw, we're looking for artists to teach paid courses on our platform. We handle all the production side, you just teach. Worth a quick chat?",
+  "dm_message": "Hey, your work is great. I'm Noras from 21Draw, we're an online art school. Looking for artists to teach paid courses on our platform. Interested?",
   "email_subject": "Teaching opportunity at 21Draw",
-  "email_body": "Hi,\\n\\nI'm Noras from 21Draw. We're an online art school with 2M+ students, courses taught by pros from Disney, Marvel, DreamWorks.\\n\\nWe're looking for artists to teach their own courses. You get upfront payment plus ongoing royalties from sales. We handle filming, editing, everything.\\n\\nYour storyboard expertise would be a great addition to our course lineup. Happy to share more details.\\n\\nNoras\\n21Draw"
+  "email_body": "Hi,\\n\\nI'm Noras from 21Draw. We're an online art school with 2M+ students, courses taught by pros from Disney, Marvel, DreamWorks.\\n\\nWe're looking for artists to teach their own courses. You get upfront payment plus ongoing royalties. We handle filming, editing, everything.\\n\\nHappy to share more details.\\n\\nNoras\\n21Draw"
 }`;
   } else {
     roleContext = 'This creator is flagged as a UGC Creator for 21Draw.';
@@ -178,8 +177,7 @@ EXAMPLE (Course Teacher):
 Key points:
 - This is PAID work, not a free product exchange
 - They would create content featuring 21Draw courses/platform
-- 21Draw is a premium art education platform (2M+ students, Disney/Marvel alumni instructors)
-- Reference something specific about their art or content style`;
+- Keep the DM general and short. Save details for the email.`;
     jsonFormat = `{
   "contact_email": "email@example.com or null",
   "contact_method": "EMAIL/DM/BOTH",
@@ -193,9 +191,9 @@ Key points:
     examples = `
 EXAMPLE (UGC Creator):
 {
-  "dm_message": "Saw your character design breakdowns and they're so clean. I work at 21Draw (online art school, 2M+ students) and we're looking for artists to do paid content for us. Thought you'd be a good fit. Can I send you some details?",
+  "dm_message": "Hey, love your work. I'm Noras from 21Draw, we're an online art school. We pay artists to create content for us. Would you be down?",
   "email_subject": "Paid content collab with 21Draw",
-  "email_body": "Hi,\\n\\nI'm Noras from 21Draw. Found your character design work on Instagram and it's great.\\n\\nWe're an online art school (2M+ students, courses by Disney/Marvel pros) and we pay artists to create promo content for our platform. Your style and audience would be a good match.\\n\\nHappy to share details if you're interested.\\n\\nNoras\\n21Draw"
+  "email_body": "Hi,\\n\\nI'm Noras from 21Draw, an online art school with 2M+ students and courses by Disney/Marvel pros.\\n\\nWe pay artists to create promo content for our platform. Your style and audience would be a good match.\\n\\nHappy to share details if you're interested.\\n\\nNoras\\n21Draw"
 }`;
   }
 
@@ -232,18 +230,15 @@ ${tierDefs}
 4. ${messageInstructions}
 
 DM MESSAGE RULES:
-- 2-3 short sentences max. Keep it under 400 characters.
+- 2 sentences max. Keep it super short, under 250 characters.
+- Say who you are and what you're looking for. That's it. Don't oversell.
+- Keep it general. Do NOT describe their specific work, their style, their techniques, or their content in detail. At most say "love your work" or "your stuff is great". Never analyze what they do.
+- Do NOT mention "2M+ students", "Disney", "Marvel", "DreamWorks", follower counts, or production details in DMs. Save that for email.
 - NEVER use em-dashes. Use periods or commas instead.
-- BANNED PHRASES (do NOT use any of these, even rephrased): "incredible", "stunning", "really stood out", "caught my eye", "caught my attention", "I'd love to", "fantastic", "exceptional", "impressed", "stood out to me", "drew me in"
-- One specific thing you noticed about their work, stated simply. Don't stack compliments.
-- Don't cram everything into the first message. Just open the door.
-- Write like you're texting someone about their work, not writing marketing copy.
-- Vary sentence openings. Not every message should start with "Your [noun]..."
-- Vary the closing. Not always "Would you be open to hearing more?" Try: "Can I send you details?", "Worth a chat?", "Open to chatting?", "Interested?"
+- BANNED PHRASES: "incredible", "stunning", "really stood out", "caught my eye", "caught my attention", "I'd love to", "fantastic", "exceptional", "impressed", "stood out to me", "drew me in", "perfect fit"
 - Zero emojis.
-- Sign as just "Noras" in DMs, not "Noras from 21Draw".
-- Mention 21Draw and what it is in one short phrase, like "21Draw (online art school, 2M+ students)" or "I'm at 21Draw, we do online art courses".
-- Keep the tone casual. Short sentences. No corporate language.
+- Just open the door. If they're interested they'll reply.
+- Write like a real person texting, not a recruiter or marketer.
 
 EMAIL RULES:
 - Subject: 5-8 words, direct, no buzzwords
