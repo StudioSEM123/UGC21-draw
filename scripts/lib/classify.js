@@ -4,7 +4,7 @@
 const https = require('https');
 
 const MODEL = 'claude-sonnet-4-5-20250929';
-const PROMPT_VERSION = 5;
+const PROMPT_VERSION = 6;
 
 function callClaude(prompt, apiKey) {
   return new Promise((resolve, reject) => {
@@ -132,14 +132,16 @@ Keep DMs general and short. Save details for emails.`;
   "personalization_hook": "the specific thing you referenced about their work"
 }`;
     examples = `
-EXAMPLE (BOTH, UGC + Teacher):
+EXAMPLE A (BOTH, with work reference):
 {
-  "dm_message": "Hey, love your work. I'm Noras from 21Draw, we're an online art school. We're looking for artists to create paid content for us. Interested?",
-  "email_subject": "Paid content collab with 21Draw",
-  "email_body": "Hi,\\n\\nI'm Noras from 21Draw, an online art school with 2M+ students and courses taught by Disney and Marvel pros.\\n\\nWe pay artists to create promotional content for our platform. Your work and audience would be a great match.\\n\\nHappy to share details if you're interested.\\n\\nNoras\\n21Draw",
-  "teacher_dm_message": "Hey, your stuff is great. I'm Noras from 21Draw, we're an online art school. We're looking for artists to teach paid courses on our platform. Open to chatting?",
-  "teacher_email_subject": "Teaching opportunity at 21Draw",
-  "teacher_email_body": "Hi,\\n\\nI'm Noras from 21Draw. We're an online art school with 2M+ students and instructors from Disney, Marvel, and DreamWorks.\\n\\nWe're looking for artists to teach courses. You get paid upfront plus ongoing royalties, and we handle all filming and production.\\n\\nWould love to tell you more.\\n\\nNoras\\n21Draw"
+  "dm_message": "Hey, love your gouache work. I'm Noras from 21Draw, we're an online art school. We pay artists to create content for us and also looking for course teachers. Can I tell you more?",
+  "teacher_dm_message": "Hey, your tutorials are really good. I'm Noras from 21Draw, we're an online art school. We're looking for artists to teach paid courses on our platform. Open to chatting?"
+}
+
+EXAMPLE B (BOTH, no work reference):
+{
+  "dm_message": "Hey, I'm Noras from 21Draw. We're an online art school and we pay creators to make content for us. Think you'd be a great fit. Interested?",
+  "teacher_dm_message": "Hey, I'm Noras from 21Draw, an online art school. We're looking for artists to teach paid courses. Would love to chat if you're open to it."
 }`;
   } else if (isTeacher) {
     roleContext = 'This creator is flagged as a potential Course Teacher for 21Draw.';
@@ -162,11 +164,14 @@ Key points:
   "personalization_hook": "the specific thing you referenced about their work"
 }`;
     examples = `
-EXAMPLE (Course Teacher):
+EXAMPLE A (Teacher, with work reference):
 {
-  "dm_message": "Hey, your work is great. I'm Noras from 21Draw, we're an online art school. Looking for artists to teach paid courses on our platform. Interested?",
-  "email_subject": "Teaching opportunity at 21Draw",
-  "email_body": "Hi,\\n\\nI'm Noras from 21Draw. We're an online art school with 2M+ students, courses taught by pros from Disney, Marvel, DreamWorks.\\n\\nWe're looking for artists to teach their own courses. You get upfront payment plus ongoing royalties. We handle filming, editing, everything.\\n\\nHappy to share more details.\\n\\nNoras\\n21Draw"
+  "dm_message": "Hey, your portrait tutorials are great. I'm Noras from 21Draw, an online art school. We're looking for artists to teach paid courses. Would you be interested?"
+}
+
+EXAMPLE B (Teacher, no work reference):
+{
+  "dm_message": "Hey, I'm Noras from 21Draw. We're an art education platform looking for artists to teach paid courses. Would love to chat if you're open to it."
 }`;
   } else {
     roleContext = 'This creator is flagged as a UGC Creator for 21Draw.';
@@ -189,11 +194,14 @@ Key points:
   "personalization_hook": "the specific thing you referenced about their work"
 }`;
     examples = `
-EXAMPLE (UGC Creator):
+EXAMPLE A (UGC, with work reference):
 {
-  "dm_message": "Hey, love your work. I'm Noras from 21Draw, we're an online art school. We pay artists to create content for us. Would you be down?",
-  "email_subject": "Paid content collab with 21Draw",
-  "email_body": "Hi,\\n\\nI'm Noras from 21Draw, an online art school with 2M+ students and courses by Disney/Marvel pros.\\n\\nWe pay artists to create promo content for our platform. Your style and audience would be a good match.\\n\\nHappy to share details if you're interested.\\n\\nNoras\\n21Draw"
+  "dm_message": "Hey, your character designs are so good. I'm Noras from 21Draw, we're an online art school. We pay artists to create content for us. Can I send you details?"
+}
+
+EXAMPLE B (UGC, no work reference):
+{
+  "dm_message": "Hey, I'm Noras from 21Draw, an online art school. We're looking for creators to make paid content for us. Think you'd be great. Interested?"
 }`;
   }
 
@@ -230,15 +238,18 @@ ${tierDefs}
 4. ${messageInstructions}
 
 DM MESSAGE RULES:
-- 2 sentences max. Keep it super short, under 250 characters.
-- Say who you are and what you're looking for. That's it. Don't oversell.
-- Keep it general. Do NOT describe their specific work, their style, their techniques, or their content in detail. At most say "love your work" or "your stuff is great". Never analyze what they do.
-- Do NOT mention "2M+ students", "Disney", "Marvel", "DreamWorks", follower counts, or production details in DMs. Save that for email.
+- 2-3 short sentences. Under 300 characters.
+- VARY the messages. Do NOT write the same message for everyone. Mix it up:
+  * Sometimes open with a brief warm comment about their work ("love your landscapes", "your characters are great")
+  * Sometimes skip the compliment and just intro yourself directly
+  * Sometimes use their name if it's in their bio
+  * Change up the wording, sentence structure, and closing every time
+- Keep any work reference SHORT and casual, one small phrase max. Don't analyze or describe what they do in detail.
+- Do NOT mention "2M+ students", "Disney", "Marvel", "DreamWorks", or production details in DMs. Save that for email.
 - NEVER use em-dashes. Use periods or commas instead.
 - BANNED PHRASES: "incredible", "stunning", "really stood out", "caught my eye", "caught my attention", "I'd love to", "fantastic", "exceptional", "impressed", "stood out to me", "drew me in", "perfect fit"
 - Zero emojis.
-- Just open the door. If they're interested they'll reply.
-- Write like a real person texting, not a recruiter or marketer.
+- Warm but brief. Like texting someone you want to work with.
 
 EMAIL RULES:
 - Subject: 5-8 words, direct, no buzzwords
