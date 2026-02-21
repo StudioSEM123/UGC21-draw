@@ -42,10 +42,11 @@ Human Review (Web App):
 Manual trigger to run the workflow.
 
 ### Settings1
-Configuration node. Sets competitor usernames to scrape and filter parameters.
+Configuration node. Sets competitor usernames to scrape and filter parameters. Reads `mode` from webhook body (`ugc`, `teacher`, or `both`).
 - Competitors: domestika, schoolismlive, storyboardart_org, easy_drawing_ideas__, pix_bun
-- Follower range: 2k-150k
+- Follower range: mode-dependent (ugc: 2K-200K, teacher: 10K-1M, both: 2K-1M)
 - Results limit: 100
+- Discovery mode stored as `discovery_mode` on each profile
 
 ### Apify: Tagged Posts
 **Type:** HTTP Request (POST)
@@ -133,13 +134,16 @@ The `resultsLimit: 30` is critical — without it, Apify only returns profile me
 **Key implementation details:**
 - Content wrapped in `JSON.stringify(...)` to escape special characters
 - User-generated text uses `.replace(/[\n\r]/g, " ")` to strip newlines
-- Results logged to `ai_logs` table with prompt_version
+- Results logged to `ai_logs` table with prompt_version (currently v2)
 
 **Evaluation criteria:**
 - Art niche relevance is weighted heavily
 - 5k+ followers with art content = valuable
 - Lower engagement doesn't disqualify if content and following are strong
 - REJECT is only for spam, no art content, or very low following
+- Claude now evaluates BOTH UGC fit and teaching fit, returning additional fields:
+  - `course_teacher_score` (1-10): teaching potential score
+  - `suggested_type`: UGC_CREATOR, COURSE_TEACHER, or BOTH
 
 ### Merge
 **Type:** Code (JavaScript)
@@ -224,13 +228,13 @@ The `resultsLimit: 30` is critical — without it, Apify only returns profile me
 
 ## Supabase Schema
 
-See full schema at `21draw-ugc-pipeline/database/schema.sql` (58 columns in profiles).
+See full schema at `21draw-ugc-pipeline/database/schema.sql` (62 columns in profiles).
 
 **Key column groups:**
-- **Identity:** id, username, profile_url (generated), status, verified, analyzed_at, prompt_version
+- **Identity:** id, username, profile_url (generated), status, verified, analyzed_at, prompt_version, profile_type, discovery_mode
 - **Source:** source, source_type
 - **Profile metrics:** followers, engagement_rate, bio, has_art_content, avg_likes, avg_comments
-- **Claude analysis:** niche_relevance, profile_score, recommendation, reasoning, content_style
+- **Claude analysis:** niche_relevance, profile_score, recommendation, reasoning, content_style, course_teacher_score, suggested_type
 - **Gemini video analysis:** talks_in_videos, speaks_english, voice_potential, teaching_potential, brand_fit, production_quality, overall_ugc_score, video_recommendation, ugc_reasoning, next_steps, audio_description, speech_quote, videos_with_speech
 - **Reel data:** reel_1-3 (url, post_url, likes, comments, duration, caption), avg_duration, total_reels_found
 - **Storage:** reel_1-3_storage_path, videos_downloaded

@@ -1,7 +1,7 @@
 # UGC Finder for 21Draw
 
 ## Role
-You are an automation specialist helping build the UGC creator discovery pipeline for 21Draw, an online art education platform.
+You are an automation specialist helping build the dual-purpose creator discovery pipeline for 21Draw, an online art education platform. The pipeline discovers both UGC creators and potential course teachers.
 
 ## Tech Stack
 - n8n (self-hosted on Hostinger VPS)
@@ -18,15 +18,22 @@ You are an automation specialist helping build the UGC creator discovery pipelin
 4. Only APPROVED profiles (via human review) go to Phase 2 (Gemini video analysis)
 5. Profiles with existing Gemini data (overall_ugc_score IS NOT NULL) skip Phase 2
 
+## Discovery Modes
+- **`ugc`**: UGC creators (2K-200K followers)
+- **`teacher`**: Course teachers (10K-1M followers)
+- **`both`**: Combined search (2K-1M followers) — default mode
+
+Webhook accepts `{ "mode": "ugc" | "teacher" | "both" }` body parameter.
+
 ## Pipeline Overview (5 stages — see docs/pipeline-diagram.html)
-1. **Stage 1 — Discovery + AI Screening (n8n on VPS, automatic)**: Scrape competitor tags → Apify profile fetch → Filter Reels → Download & store videos → Claude analysis → Save to Supabase
+1. **Stage 1 — Discovery + AI Screening (n8n on VPS, automatic)**: Scrape competitor tags → Apify profile fetch (mode-dependent follower range) → Filter Reels → Download & store videos → Claude analysis (evaluates BOTH UGC fit and teaching fit) → Save to Supabase
 2. **Stage 2 — Human Review (web app, manual)**: Score-ranked queue → approve/deny → logged to human_reviews
 3. **Stage 3 — Gemini Video Analysis (local script, manual)**: Download videos from Supabase Storage → Upload to Gemini → 14-field video analysis → Update profile → Log to ai_logs
 4. **Stage 4 — Outreach Classification (local script, manual)**: Claude assigns tier + writes DM/email messages → Saved to outreach table
 5. **Stage 5 — Outreach Management (web app, manual)**: Track contact status, copy DMs, send emails, timeline tracking
 
 ## n8n Workflow
-- **Phase 1 trigger**: `https://n8n.srv1275163.hstgr.cloud/webhook/phase-1` → Settings1 → Discovery pipeline
+- **Phase 1 trigger**: `https://n8n.srv1275163.hstgr.cloud/webhook/phase-1` (accepts `{ "mode": "ugc" | "teacher" | "both" }`) → Settings1 → Discovery pipeline
 - **Phase 2 nodes**: Still in workflow but NOT USED. Replaced by `scripts/gemini-analyze.js`. Safe to deactivate or remove.
 - Only Phase 1 runs on n8n. All other stages run locally on your Mac.
 
@@ -35,11 +42,12 @@ You are an automation specialist helping build the UGC creator discovery pipelin
 - Score-ranked queue with embedded Instagram reels (lazy-loaded iframes)
 - Keyboard shortcuts: A=approve, D=deny, U=undo, J/K=next/prev
 - Search bar, filter buttons (All/Collaborate/Review/Pass/Reject/Approved/Denied)
-- Writes decisions to `human_reviews` table, updates profile status to HUMAN_REVIEWED
+- Reviewer selects `profile_type` during review (pre-filled from AI `suggested_type`)
+- Writes decisions to `human_reviews` table (includes `profile_type`), updates profile status to HUMAN_REVIEWED
 
 ## Outreach System (Web App — Outreach Tab)
 - Same Express server, separate tab at `/outreach`
-- Cards sorted by tier and score, showing profile metrics + AI-generated DM message
+- Cards sorted by tier and score, showing profile metrics + AI-generated type-specific message (UGC pitch vs teaching pitch)
 - Status dropdown: QUEUED → CONTACTED → FOLLOW_UP_1 → FOLLOW_UP_2 → REPLIED → NEGOTIATING → CONFIRMED / DECLINED / NO_RESPONSE
 - DM button: copies message + opens Instagram DM directly (`https://ig.me/m/{username}`)
 - Email button: opens mailto with pre-filled subject/body (shown when email exists)
@@ -57,10 +65,10 @@ You are an automation specialist helping build the UGC creator discovery pipelin
 domestika, schoolismlive, storyboardart_org, easy_drawing_ideas__, pix_bun
 
 ## Database (8 tables)
-- `profiles` — 55 columns (identity, source, metrics, Claude scores, Gemini scores, reel data, storage paths, prompt_version)
-- `human_reviews` — approve/deny decisions with reasoning, linked to profile_id
+- `profiles` — 62 columns (identity, source, metrics, Claude scores, Gemini scores, reel data, storage paths, prompt_version, profile_type, course_teacher_score, suggested_type, discovery_mode)
+- `human_reviews` — approve/deny decisions with reasoning + profile_type, linked to profile_id
 - `ai_logs` — LLM call audit trail (Claude + Gemini, with prompt_version)
-- `outreach` — outreach queue with tiers, contact method, messages, status tracking, timestamps
+- `outreach` — outreach queue with tiers, contact method, type-specific messages (UGC/teacher), profile_type, status tracking, timestamps
 - `seen_profiles` — deduplication (all discovered usernames including rejected)
 - `skipped_profiles` — logs why profiles were skipped at each pipeline stage
 - `top_videos` — reserved for future use
@@ -75,9 +83,10 @@ domestika, schoolismlive, storyboardart_org, easy_drawing_ideas__, pix_bun
 - 61 profiles in outreach table (29 TIER_1, 27 TIER_2, 5 TIER_3)
 
 ## Outreach Tier Definitions
-- **TIER_1**: Strong art educator/creator, high scores (8+), speaks English, creates video content. Perfect UGC fit.
+Tiers are profile_type-aware (UGC_CREATOR, COURSE_TEACHER, or BOTH):
+- **TIER_1**: Strong fit for their type. UGC: high scores (8+), speaks English, creates video content. Teacher: strong teaching potential, established following, professional content.
 - **TIER_2**: Good creator but missing something (doesn't talk in videos, lower engagement, unclear language)
-- **TIER_3**: Approved but lower potential for video UGC specifically
+- **TIER_3**: Approved but lower potential for their specific type
 
 ## Field Mapping (Gemini → Supabase)
 - content_quality → production_quality
@@ -106,13 +115,15 @@ domestika, schoolismlive, storyboardart_org, easy_drawing_ideas__, pix_bun
 - `review-app/server.js` — Human review + outreach web app (Express server, port 3000)
 - `review-app/public/style.css` — UI styles for review and outreach tabs
 - `scripts/gemini-analyze.js` — Standalone Gemini video analysis (replaces n8n Phase 2)
-- `scripts/classify-outreach.js` — Claude-powered outreach classification and message generation
+- `scripts/classify-outreach.js` — Claude-powered outreach classification and type-specific message generation
+- `scripts/rescore-profiles.js` — Re-score existing profiles with updated prompt (adds course_teacher_score, suggested_type)
+- `scripts/lib/classify.js` — Shared classification module used by outreach and rescore scripts
 - `scripts/cleanup-storage.js` — Supabase storage cleanup utility
 - `scripts/recover-videos.js` — Profile recovery from Apify data
 - `scripts/sync-code-to-workflow.js` — Syncs JS files into workflow JSON
 - `21draw-ugc-pipeline/code-nodes/` — JavaScript for n8n Code nodes
 - `21draw-ugc-pipeline/database/schema.sql` — Canonical DB schema
-- `workflows/n8n UGC latest (7).json` — Current n8n workflow (v7)
+- `workflows/n8n UGC latest (8).json` — Current n8n workflow (v8)
 - `docs/pipeline-diagram.html` — Visual pipeline architecture diagram (open in browser)
 - `prompts/` — AI prompt templates (Claude + Gemini)
 
@@ -124,6 +135,9 @@ node scripts/gemini-analyze.js --limit 5  # test with 5
 
 # Classify approved profiles for outreach
 node scripts/classify-outreach.js
+
+# Re-score existing profiles with v2 prompt (adds course_teacher_score, suggested_type)
+node scripts/rescore-profiles.js
 
 # Start review + outreach app
 node review-app/server.js   # → localhost:3000

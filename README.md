@@ -1,14 +1,14 @@
 # UGC Finder for 21Draw
 
-Automated pipeline to discover and evaluate Instagram creators for UGC partnerships with 21Draw (online art education platform).
+Automated pipeline to discover and evaluate Instagram creators for UGC partnerships and course teaching opportunities with 21Draw (online art education platform).
 
 ## How It Works
 
 **Phase 1 — Discovery + Profile Analysis (n8n):**
 1. Scrape posts tagging competitor accounts (domestika, schoolismlive, etc.)
 2. Fetch full profiles via Apify (followers, bio, reels)
-3. Filter by followers (2k-150k) and qualifying video content (15-90s reels)
-4. Claude AI evaluates profile fit → COLLABORATE / REVIEW / PASS / REJECT
+3. Filter by followers (mode-dependent: 2K-1M) and qualifying video content (15-90s reels)
+4. Claude AI evaluates both UGC fit and teaching fit → COLLABORATE / REVIEW / PASS / REJECT
 5. Save to Supabase, log to ai_logs + skipped_profiles
 
 **Phase 2 — Video Analysis (n8n):**
@@ -30,7 +30,7 @@ Automated pipeline to discover and evaluate Instagram creators for UGC partnersh
 - **Apify** — Instagram scraping
 - **Claude API** — Profile analysis (Phase 1)
 - **Gemini** — Video analysis with actual video files (Phase 2)
-- **Supabase** — PostgreSQL database + Storage (7 tables, 58 columns in profiles)
+- **Supabase** — PostgreSQL database + Storage (8 tables, 62 columns in profiles)
 - **Express** — Human review web app (vanilla HTML/JS)
 
 ## Current Stats (Feb 17, 2026)
@@ -38,6 +38,13 @@ Automated pipeline to discover and evaluate Instagram creators for UGC partnersh
 - 130 human reviews completed (61 approved, 69 denied)
 - 57 profiles with videos in Supabase Storage
 - 19 profiles with Phase 2 (Gemini) video analysis
+
+## Discovery Modes
+- **`ugc`** — UGC creators (2K-200K followers)
+- **`teacher`** — Course teachers (10K-1M followers)
+- **`both`** — Combined search (2K-1M followers, default)
+
+Trigger via webhook: `POST /webhook/phase-1` with body `{ "mode": "ugc" | "teacher" | "both" }`
 
 ## Current Competitors
 domestika, schoolismlive, storyboardart_org, easy_drawing_ideas__, pix_bun
@@ -72,7 +79,9 @@ workflows/                 # n8n workflow JSON exports
 scripts/                   # Utility scripts
   cleanup-storage.js       # Delete videos for denied profiles
   recover-videos.js        # Recover profiles from Apify data
+  rescore-profiles.js      # Re-score existing profiles with v2 prompt
   sync-code-to-workflow.js # Sync JS code into workflow JSON
+  lib/classify.js          # Shared classification module
   audit/                   # Hallucination detection
   utils/                   # DB utilities
 21draw-ugc-pipeline/       # Pipeline code and config

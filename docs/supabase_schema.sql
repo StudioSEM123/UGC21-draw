@@ -1,6 +1,6 @@
 -- UGC Finder v2 - Supabase Schema Reference
--- Last Updated: 2026-02-17
--- Matches live Supabase database (58 columns in profiles, 7 tables total)
+-- Last Updated: 2026-02-21
+-- Matches live Supabase database (62 columns in profiles, 8 tables total)
 --
 -- Canonical schema is at: 21draw-ugc-pipeline/database/schema.sql
 -- This file is kept for quick reference in the docs folder.
@@ -8,7 +8,7 @@
 -- ══════════════════════════════════════════════════════════════════════════
 -- TABLES OVERVIEW
 -- ══════════════════════════════════════════════════════════════════════════
--- profiles          — 177 rows, 58 columns (main pipeline data)
+-- profiles          — 177 rows, 62 columns (main pipeline data)
 -- human_reviews     — 130 rows (approve/deny decisions)
 -- ai_logs           — 682 rows (Claude + Gemini audit trail)
 -- seen_profiles     — 174 rows (deduplication)
@@ -19,10 +19,12 @@
 -- ══════════════════════════════════════════════════════════════════════════
 -- KEY COLUMN GROUPS (profiles table)
 -- ══════════════════════════════════════════════════════════════════════════
--- Identity:        id, username, profile_url (generated), status, verified, analyzed_at, prompt_version
+-- Identity:        id, username, profile_url (generated), status, verified, analyzed_at, prompt_version,
+--                  profile_type (UGC_CREATOR/COURSE_TEACHER/BOTH), discovery_mode (ugc/teacher/both)
 -- Source:          source, source_type
 -- Profile metrics: followers, engagement_rate, bio, has_art_content, avg_likes, avg_comments
--- Claude (Phase 1): niche_relevance, profile_score, recommendation, reasoning, content_style
+-- Claude (Phase 1): niche_relevance, profile_score, recommendation, reasoning, content_style,
+--                   course_teacher_score (1-10), suggested_type (UGC_CREATOR/COURSE_TEACHER/BOTH)
 -- Gemini (Phase 2): talks_in_videos, speaks_english, voice_potential, teaching_potential,
 --                   brand_fit, production_quality, overall_ugc_score, video_recommendation,
 --                   ugc_reasoning, next_steps, audio_description, speech_quote, videos_with_speech

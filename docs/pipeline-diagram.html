@@ -78,8 +78,8 @@
 </head>
 <body>
 
-<h1>21Draw UGC Pipeline</h1>
-<p class="subtitle">Creator Discovery &rarr; AI Screening &rarr; Human Review &rarr; Video Analysis &rarr; Outreach</p>
+<h1>21Draw Creator Pipeline</h1>
+<p class="subtitle">Discovery (UGC + Teachers) &rarr; AI Screening &rarr; Human Review &rarr; Video Analysis &rarr; Outreach</p>
 
 <div class="pipeline">
 
@@ -97,12 +97,12 @@
     <div class="stage-body">
       <div class="detail-block">
         <h4>What happens</h4>
-        <p>Scrapes followers of competitor art accounts (Domestika, Schoolism, etc.) via Apify. Filters by follower count (2K-150K). Claude AI analyzes each profile and scores them on niche relevance, UGC potential, and gives a recommendation.</p>
+        <p>Scrapes followers of competitor art accounts (Domestika, Schoolism, etc.) via Apify. Filters by mode-dependent follower count (ugc: 2K-200K, teacher: 10K-1M, both: 2K-1M). Claude AI evaluates both UGC and teaching fit, returning <code>course_teacher_score</code>, <code>suggested_type</code> (UGC_CREATOR / COURSE_TEACHER / BOTH), and a recommendation.</p>
       </div>
       <div class="detail-block">
         <h4>How to trigger</h4>
-        <div class="trigger">GET /webhook/phase-1</div>
-        <p style="margin-top:8px">Or set a schedule in n8n (currently deactivated)</p>
+        <div class="trigger">POST /webhook/phase-1</div>
+        <p style="margin-top:8px">Body: <code>{ "mode": "ugc" | "teacher" | "both" }</code> (default: both)</p>
       </div>
     </div>
     <div class="status-flow">
@@ -136,7 +136,7 @@
     <div class="stage-body">
       <div class="detail-block">
         <h4>What happens</h4>
-        <p>You open the review app, see profiles ranked by AI score. Watch their Instagram reels. Approve or deny each creator. Decisions are saved to the <code>human_reviews</code> table. Only approved profiles continue to the next stage.</p>
+        <p>You open the review app, see profiles ranked by AI score. Watch their Instagram reels. Approve or deny each creator, selecting <code>profile_type</code> (pre-filled from AI <code>suggested_type</code>). Decisions are saved to the <code>human_reviews</code> table. Only approved profiles continue to the next stage.</p>
       </div>
       <div class="detail-block">
         <h4>How to access</h4>
@@ -208,7 +208,7 @@
     <div class="stage-body">
       <div class="detail-block">
         <h4>What happens</h4>
-        <p>Claude AI reads each approved profile + Gemini scores and assigns an outreach tier (TIER_1/2/3), extracts any email from their bio, and writes a personalized DM message and email for each creator.</p>
+        <p>Claude AI reads each approved profile + Gemini scores and assigns an outreach tier (TIER_1/2/3) based on <code>profile_type</code>. Extracts any email from their bio, and writes a type-specific personalized message (UGC pitch vs teaching pitch) for DM and email.</p>
       </div>
       <div class="detail-block">
         <h4>How to run</h4>

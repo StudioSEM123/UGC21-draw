@@ -10,6 +10,9 @@ const PROJECT_ROOT = path.resolve(__dirname, '..');
 const DATA_DIR = path.join(__dirname, 'data');
 const PROGRESS_FILE = path.join(DATA_DIR, 'progress.json');
 
+// NOTE: These are legacy defaults for the recovery script.
+// The live pipeline now uses mode-dependent ranges:
+//   ugc: 2K-200K | teacher: 10K-1M | both: 2K-1M
 const MIN_FOLLOWERS = 2000;
 const MAX_FOLLOWERS = 150000;
 const CLAUDE_CONCURRENCY = 3;

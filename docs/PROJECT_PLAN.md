@@ -13,7 +13,7 @@ Upload this file to a new Claude.ai chat and say: "Continue from Phase X, Task Y
 
 ## Project Overview
 
-**What we're building:** An automated pipeline that discovers, analyzes, and qualifies Instagram creators for UGC partnerships with 21Draw, an online art education platform.
+**What we're building:** An automated pipeline that discovers, analyzes, and qualifies Instagram creators for UGC partnerships and course teaching opportunities with 21Draw, an online art education platform. Supports discovery modes: `ugc` (2K-200K), `teacher` (10K-1M), `both` (2K-1M, default).
 
 **The end-to-end funnel:**
 Find Creators → Scrape Profiles → Analyze with Claude AI → Human Review → Analyze Videos with Gemini → Score & Rank → Outreach
@@ -49,17 +49,17 @@ Status flow: NEW → ENRICHED → ANALYZED/PENDING_REVIEW → HUMAN_REVIEWED →
 - easy_drawing_ideas__
 - pix_bun
 
-Settings: 2k-150k followers, 100 results limit
+Settings: mode-dependent follower range (ugc: 2K-200K, teacher: 10K-1M, both: 2K-1M), 100 results limit
 
 ---
 
-## Database (58 columns in profiles)
+## Database (62 columns in profiles)
 
 **Tables:**
-- `profiles` — 58 columns (identity, source, metrics, Claude scores, Gemini scores, reel data, storage paths, prompt_version)
+- `profiles` — 62 columns (identity, source, metrics, Claude scores, Gemini scores, reel data, storage paths, prompt_version, profile_type, course_teacher_score, suggested_type, discovery_mode)
 - `ai_logs` — LLM call audit trail (Claude + Gemini, includes prompt_version)
 - `seen_profiles` — deduplication (all discovered usernames including rejected)
-- `human_reviews` — approve/deny decisions with reasoning, linked to profile_id
+- `human_reviews` — approve/deny decisions with reasoning + profile_type, linked to profile_id
 - `skipped_profiles` — logs why profiles were skipped at each stage
 - `top_videos` — reserved for future use
 - `debug_log` — temporary debugging entries
@@ -183,7 +183,7 @@ Settings: 2k-150k followers, 100 results limit
 - [x] Renamed 7 generic nodes to descriptive names (e.g., "Code in JavaScript" → "Prepare Gemini Input")
 - [x] Realigned all nodes into two clean horizontal rows (Phase 1 at y=300, Phase 2 at y=800)
 - [x] Added 7 organized sticky notes covering both phases
-- [x] Deployed as workflow v7
+- [x] Deployed as workflow v7 (superseded by v8)
 
 ## Phase 6: Outreach System — DONE
 
@@ -205,6 +205,19 @@ Settings: 2k-150k followers, 100 results limit
 - [x] Filter buttons (All, Collaborate, Review) now show only profiles you haven't reviewed yet
 - [x] Created pipeline architecture diagram (`docs/pipeline-diagram.html`)
 - [x] Confirmed n8n Phase 2 nodes are NOT USED — replaced by standalone `scripts/gemini-analyze.js`
+
+## Phase 6C: Dual-Purpose Pipeline (UGC + Teachers) — DONE
+
+- [x] Added discovery modes: `ugc` (2K-200K), `teacher` (10K-1M), `both` (2K-1M, default)
+- [x] Webhook accepts `{ "mode": "ugc" | "teacher" | "both" }` body parameter
+- [x] Claude now evaluates both UGC and teaching fit: `course_teacher_score`, `suggested_type`
+- [x] Human reviewer selects `profile_type` during review (pre-filled from AI suggestion)
+- [x] Outreach generates type-specific messages (UGC pitch vs teaching pitch)
+- [x] New columns: `profiles.profile_type`, `profiles.course_teacher_score`, `profiles.suggested_type`, `profiles.discovery_mode`; `human_reviews.profile_type`; `outreach.profile_type`
+- [x] Created `scripts/rescore-profiles.js` for re-scoring existing profiles
+- [x] Created `scripts/lib/classify.js` shared module
+- [x] Updated prompt to v2
+- [x] Deployed as workflow v8 (v7 archived)
 
 ## Phase 7: Re-classify Outreach Tiers — TODO
 
@@ -274,7 +287,7 @@ Settings: 2k-150k followers, 100 results limit
 | `21draw-ugc-pipeline/database/migrations/` | human_reviews, skipped_profiles, prompt_version, outreach |
 | `21draw-ugc-pipeline/code-nodes/phase1/` | Claude logging, pre-filter logging, seen_profiles logging |
 | `21draw-ugc-pipeline/code-nodes/phase2/` | Gemini validation, skipped logging, native https, public storage URLs |
-| `workflows/n8n UGC latest (7).json` | Current workflow: 2 separate webhooks, cleaned nodes, 7 sticky notes |
+| `workflows/n8n UGC latest (8).json` | Current workflow (v8): dual-purpose pipeline with discovery modes, profile_type support |
 | `docs/pipeline-diagram.html` | Visual pipeline architecture diagram (5 stages, where each runs, how to trigger) |
 
 ## VPS Deployment Notes
