@@ -312,7 +312,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=AIzaSyAA63nf0G3Wc4HMhFUL8EWGHX0RqBQyyCs",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=GEMINI_API_KEY_PLACEHOLDER",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ $json.requestBody }}",
@@ -559,7 +559,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://generativelanguage.googleapis.com/upload/v1beta/files?key=AIzaSyAA63nf0G3Wc4HMhFUL8EWGHX0RqBQyyCs",
+        "url": "https://generativelanguage.googleapis.com/upload/v1beta/files?key=GEMINI_API_KEY_PLACEHOLDER",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -634,7 +634,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://generativelanguage.googleapis.com/upload/v1beta/files?key=AIzaSyAA63nf0G3Wc4HMhFUL8EWGHX0RqBQyyCs",
+        "url": "https://generativelanguage.googleapis.com/upload/v1beta/files?key=GEMINI_API_KEY_PLACEHOLDER",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -710,7 +710,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://generativelanguage.googleapis.com/upload/v1beta/files?key=AIzaSyAA63nf0G3Wc4HMhFUL8EWGHX0RqBQyyCs",
+        "url": "https://generativelanguage.googleapis.com/upload/v1beta/files?key=GEMINI_API_KEY_PLACEHOLDER",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -2034,7 +2034,7 @@
       {
         "parameters": {
           "method": "POST",
-          "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=AIzaSyAA63nf0G3Wc4HMhFUL8EWGHX0RqBQyyCs",
+          "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=GEMINI_API_KEY_PLACEHOLDER",
           "sendBody": true,
           "specifyBody": "json",
           "jsonBody": "={{ $json.requestBody }}",
@@ -2301,7 +2301,7 @@
       {
         "parameters": {
           "method": "POST",
-          "url": "https://generativelanguage.googleapis.com/upload/v1beta/files?key=AIzaSyAA63nf0G3Wc4HMhFUL8EWGHX0RqBQyyCs",
+          "url": "https://generativelanguage.googleapis.com/upload/v1beta/files?key=GEMINI_API_KEY_PLACEHOLDER",
           "sendHeaders": true,
           "headerParameters": {
             "parameters": [
@@ -2376,7 +2376,7 @@
       {
         "parameters": {
           "method": "POST",
-          "url": "https://generativelanguage.googleapis.com/upload/v1beta/files?key=AIzaSyAA63nf0G3Wc4HMhFUL8EWGHX0RqBQyyCs",
+          "url": "https://generativelanguage.googleapis.com/upload/v1beta/files?key=GEMINI_API_KEY_PLACEHOLDER",
           "sendHeaders": true,
           "headerParameters": {
             "parameters": [
@@ -2452,7 +2452,7 @@
       {
         "parameters": {
           "method": "POST",
-          "url": "https://generativelanguage.googleapis.com/upload/v1beta/files?key=AIzaSyAA63nf0G3Wc4HMhFUL8EWGHX0RqBQyyCs",
+          "url": "https://generativelanguage.googleapis.com/upload/v1beta/files?key=GEMINI_API_KEY_PLACEHOLDER",
           "sendHeaders": true,
           "headerParameters": {
             "parameters": [
