@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>21Draw UGC Pipeline — Architecture</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e5e5e5; padding: 40px; min-height: 100vh; }
+  h1 { text-align: center; font-size: 28px; font-weight: 700; margin-bottom: 8px; color: #fff; }
+  .subtitle { text-align: center; font-size: 14px; color: #8e8e93; margin-bottom: 48px; }
+
+  .pipeline { display: flex; flex-direction: column; gap: 0; max-width: 900px; margin: 0 auto; position: relative; }
+
+  /* Connector line */
+  .connector { display: flex; justify-content: center; padding: 0; }
+  .connector .arrow { width: 2px; height: 32px; background: linear-gradient(to bottom, #3a3a3c, #48484a); position: relative; }
+  .connector .arrow::after { content: ''; position: absolute; bottom: -6px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 6px solid #48484a; }
+
+  .stage { background: #1c1c1e; border: 1px solid #2c2c2e; border-radius: 16px; padding: 28px 32px; position: relative; overflow: hidden; }
+  .stage::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+
+  .stage-1::before { background: linear-gradient(90deg, #007aff, #5ac8fa); }
+  .stage-2::before { background: linear-gradient(90deg, #ff9f0a, #ffd60a); }
+  .stage-3::before { background: linear-gradient(90deg, #30d158, #34c759); }
+  .stage-4::before { background: linear-gradient(90deg, #bf5af2, #af52de); }
+  .stage-5::before { background: linear-gradient(90deg, #ff453a, #ff6961); }
+
+  .stage-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+  .stage-title { display: flex; align-items: center; gap: 12px; }
+  .stage-num { font-size: 13px; font-weight: 700; padding: 4px 10px; border-radius: 6px; letter-spacing: 0.5px; }
+  .stage-1 .stage-num { background: rgba(0,122,255,0.15); color: #5ac8fa; }
+  .stage-2 .stage-num { background: rgba(255,159,10,0.15); color: #ffd60a; }
+  .stage-3 .stage-num { background: rgba(48,209,88,0.15); color: #30d158; }
+  .stage-4 .stage-num { background: rgba(191,90,242,0.15); color: #bf5af2; }
+  .stage-5 .stage-num { background: rgba(255,69,58,0.15); color: #ff453a; }
+
+  .stage-name { font-size: 20px; font-weight: 600; color: #fff; }
+
+  .where-badge { display: flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .where-vps { background: rgba(0,122,255,0.12); color: #5ac8fa; border: 1px solid rgba(0,122,255,0.2); }
+  .where-local { background: rgba(48,209,88,0.12); color: #30d158; border: 1px solid rgba(48,209,88,0.2); }
+  .where-browser { background: rgba(255,159,10,0.12); color: #ffd60a; border: 1px solid rgba(255,159,10,0.2); }
+
+  .where-icon { font-size: 14px; }
+
+  .stage-body { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .stage-body.full { grid-template-columns: 1fr; }
+
+  .detail-block h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #636366; margin-bottom: 8px; }
+  .detail-block p { font-size: 14px; line-height: 1.6; color: #aeaeb2; }
+  .detail-block code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; background: #2c2c2e; padding: 2px 8px; border-radius: 4px; color: #ffd60a; }
+  .detail-block .trigger { display: inline-flex; align-items: center; gap: 6px; background: #2c2c2e; padding: 6px 12px; border-radius: 8px; font-size: 13px; color: #e5e5e5; margin-top: 4px; font-family: 'SF Mono', 'Fira Code', monospace; }
+
+  .status-flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .status-pill { font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 6px; background: #2c2c2e; color: #aeaeb2; }
+  .status-pill.active { background: rgba(48,209,88,0.15); color: #30d158; }
+  .status-arrow { color: #48484a; font-size: 14px; }
+
+  .tech-stack { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .tech-pill { font-size: 11px; padding: 4px 10px; border-radius: 20px; border: 1px solid #3a3a3c; color: #8e8e93; }
+
+  .legend { display: flex; gap: 24px; justify-content: center; margin-top: 48px; padding: 20px; background: #1c1c1e; border-radius: 12px; border: 1px solid #2c2c2e; max-width: 900px; margin-left: auto; margin-right: auto; }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #8e8e93; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+  .legend-dot.auto { background: #007aff; }
+  .legend-dot.manual { background: #ff9f0a; }
+  .legend-dot.script { background: #bf5af2; }
+
+  .summary-box { max-width: 900px; margin: 32px auto 0; background: #1c1c1e; border: 1px solid #2c2c2e; border-radius: 12px; padding: 24px 32px; }
+  .summary-box h3 { font-size: 16px; color: #fff; margin-bottom: 12px; }
+  .summary-table { width: 100%; }
+  .summary-table td { padding: 8px 0; font-size: 14px; border-bottom: 1px solid #2c2c2e; }
+  .summary-table td:first-child { color: #8e8e93; width: 200px; }
+  .summary-table td:last-child { color: #e5e5e5; }
+  .summary-table tr:last-child td { border-bottom: none; }
+</style>
+</head>
+<body>
+
+<h1>21Draw UGC Pipeline</h1>
+<p class="subtitle">Creator Discovery &rarr; AI Screening &rarr; Human Review &rarr; Video Analysis &rarr; Outreach</p>
+
+<div class="pipeline">
+
+  <!-- STAGE 1 -->
+  <div class="stage stage-1">
+    <div class="stage-header">
+      <div class="stage-title">
+        <span class="stage-num">STAGE 1</span>
+        <span class="stage-name">Discovery + AI Screening</span>
+      </div>
+      <div class="where-badge where-vps">
+        <span class="where-icon">&#9729;</span> n8n on VPS (automatic)
+      </div>
+    </div>
+    <div class="stage-body">
+      <div class="detail-block">
+        <h4>What happens</h4>
+        <p>Scrapes followers of competitor art accounts (Domestika, Schoolism, etc.) via Apify. Filters by follower count (2K-150K). Claude AI analyzes each profile and scores them on niche relevance, UGC potential, and gives a recommendation.</p>
+      </div>
+      <div class="detail-block">
+        <h4>How to trigger</h4>
+        <div class="trigger">GET /webhook/phase-1</div>
+        <p style="margin-top:8px">Or set a schedule in n8n (currently deactivated)</p>
+      </div>
+    </div>
+    <div class="status-flow">
+      <span class="status-pill">NEW</span>
+      <span class="status-arrow">&rarr;</span>
+      <span class="status-pill">ENRICHED</span>
+      <span class="status-arrow">&rarr;</span>
+      <span class="status-pill active">ANALYZED</span>
+    </div>
+    <div class="tech-stack">
+      <span class="tech-pill">n8n</span>
+      <span class="tech-pill">Apify</span>
+      <span class="tech-pill">Claude API</span>
+      <span class="tech-pill">Supabase</span>
+    </div>
+  </div>
+
+  <div class="connector"><div class="arrow"></div></div>
+
+  <!-- STAGE 2 -->
+  <div class="stage stage-2">
+    <div class="stage-header">
+      <div class="stage-title">
+        <span class="stage-num">STAGE 2</span>
+        <span class="stage-name">Human Review</span>
+      </div>
+      <div class="where-badge where-browser">
+        <span class="where-icon">&#9881;</span> Web app on your Mac (manual)
+      </div>
+    </div>
+    <div class="stage-body">
+      <div class="detail-block">
+        <h4>What happens</h4>
+        <p>You open the review app, see profiles ranked by AI score. Watch their Instagram reels. Approve or deny each creator. Decisions are saved to the <code>human_reviews</code> table. Only approved profiles continue to the next stage.</p>
+      </div>
+      <div class="detail-block">
+        <h4>How to access</h4>
+        <div class="trigger">node review-app/server.js</div>
+        <p style="margin-top:8px">Then open <code>http://localhost:3000</code></p>
+      </div>
+    </div>
+    <div class="status-flow">
+      <span class="status-pill">ANALYZED</span>
+      <span class="status-arrow">&rarr;</span>
+      <span class="status-pill active">HUMAN_REVIEWED</span>
+    </div>
+    <div class="tech-stack">
+      <span class="tech-pill">Express.js</span>
+      <span class="tech-pill">Browser</span>
+      <span class="tech-pill">Supabase</span>
+    </div>
+  </div>
+
+  <div class="connector"><div class="arrow"></div></div>
+
+  <!-- STAGE 3 -->
+  <div class="stage stage-3">
+    <div class="stage-header">
+      <div class="stage-title">
+        <span class="stage-num">STAGE 3</span>
+        <span class="stage-name">Video Analysis (Gemini)</span>
+      </div>
+      <div class="where-badge where-local">
+        <span class="where-icon">&#9000;</span> Script on your Mac (manual)
+      </div>
+    </div>
+    <div class="stage-body">
+      <div class="detail-block">
+        <h4>What happens</h4>
+        <p>Downloads reel videos from Supabase Storage, uploads each to Google Gemini. Gemini <strong>watches the videos</strong> and evaluates: do they speak? What language? Teaching potential? Production quality? Brand fit? Gives 7 scores + overall UGC score out of 10.</p>
+      </div>
+      <div class="detail-block">
+        <h4>How to run</h4>
+        <div class="trigger">node scripts/gemini-analyze.js</div>
+        <p style="margin-top:8px">Auto-finds approved profiles without Gemini scores. Add <code>--limit 5</code> to test with a small batch.</p>
+      </div>
+    </div>
+    <div class="status-flow">
+      <span class="status-pill">HUMAN_REVIEWED</span>
+      <span class="status-arrow">&rarr;</span>
+      <span class="status-pill active">VIDEO_ANALYZED</span>
+    </div>
+    <div class="tech-stack">
+      <span class="tech-pill">Node.js script</span>
+      <span class="tech-pill">Gemini API</span>
+      <span class="tech-pill">Supabase Storage</span>
+    </div>
+  </div>
+
+  <div class="connector"><div class="arrow"></div></div>
+
+  <!-- STAGE 4 -->
+  <div class="stage stage-4">
+    <div class="stage-header">
+      <div class="stage-title">
+        <span class="stage-num">STAGE 4</span>
+        <span class="stage-name">Outreach Classification</span>
+      </div>
+      <div class="where-badge where-local">
+        <span class="where-icon">&#9000;</span> Script on your Mac (manual)
+      </div>
+    </div>
+    <div class="stage-body">
+      <div class="detail-block">
+        <h4>What happens</h4>
+        <p>Claude AI reads each approved profile + Gemini scores and assigns an outreach tier (TIER_1/2/3), extracts any email from their bio, and writes a personalized DM message and email for each creator.</p>
+      </div>
+      <div class="detail-block">
+        <h4>How to run</h4>
+        <div class="trigger">node scripts/classify-outreach.js</div>
+        <p style="margin-top:8px">Auto-finds approved profiles not yet classified. Only processes new ones.</p>
+      </div>
+    </div>
+    <div class="status-flow">
+      <span class="status-pill">VIDEO_ANALYZED</span>
+      <span class="status-arrow">&rarr;</span>
+      <span class="status-pill active">OUTREACH_READY</span>
+    </div>
+    <div class="tech-stack">
+      <span class="tech-pill">Node.js script</span>
+      <span class="tech-pill">Claude API</span>
+      <span class="tech-pill">Supabase</span>
+    </div>
+  </div>
+
+  <div class="connector"><div class="arrow"></div></div>
+
+  <!-- STAGE 5 -->
+  <div class="stage stage-5">
+    <div class="stage-header">
+      <div class="stage-title">
+        <span class="stage-num">STAGE 5</span>
+        <span class="stage-name">Outreach + Contact</span>
+      </div>
+      <div class="where-badge where-browser">
+        <span class="where-icon">&#9881;</span> Web app on your Mac (manual)
+      </div>
+    </div>
+    <div class="stage-body">
+      <div class="detail-block">
+        <h4>What happens</h4>
+        <p>You open the outreach tab, see creators ranked by tier. Click "Copy + Open DM" to send the pre-written message via Instagram. Track status from QUEUED &rarr; CONTACTED &rarr; REPLIED &rarr; CONFIRMED. Log replies, schedule follow-ups.</p>
+      </div>
+      <div class="detail-block">
+        <h4>How to access</h4>
+        <div class="trigger">http://localhost:3000/outreach</div>
+        <p style="margin-top:8px">Same server as the review app. Click the "Outreach" tab.</p>
+      </div>
+    </div>
+    <div class="status-flow">
+      <span class="status-pill">QUEUED</span>
+      <span class="status-arrow">&rarr;</span>
+      <span class="status-pill">CONTACTED</span>
+      <span class="status-arrow">&rarr;</span>
+      <span class="status-pill">FOLLOW_UP</span>
+      <span class="status-arrow">&rarr;</span>
+      <span class="status-pill">REPLIED</span>
+      <span class="status-arrow">&rarr;</span>
+      <span class="status-pill active">CONFIRMED</span>
+    </div>
+    <div class="tech-stack">
+      <span class="tech-pill">Express.js</span>
+      <span class="tech-pill">Browser</span>
+      <span class="tech-pill">Instagram DMs</span>
+      <span class="tech-pill">Email</span>
+    </div>
+  </div>
+
+</div>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot auto"></div> Automatic (n8n on VPS)</div>
+  <div class="legend-item"><div class="legend-dot manual"></div> Manual (browser app)</div>
+  <div class="legend-item"><div class="legend-dot script"></div> Manual (run script in terminal)</div>
+</div>
+
+<div class="summary-box">
+  <h3>Where Everything Runs</h3>
+  <table class="summary-table">
+    <tr><td>Stage 1: Discovery</td><td>n8n workflow on your Hostinger VPS (76.13.3.180) &mdash; can run on a schedule or manually via webhook</td></tr>
+    <tr><td>Stage 2: Human Review</td><td>Web app on your Mac &mdash; <code>node review-app/server.js</code> &rarr; localhost:3000</td></tr>
+    <tr><td>Stage 3: Gemini Video</td><td>Script on your Mac &mdash; <code>node scripts/gemini-analyze.js</code></td></tr>
+    <tr><td>Stage 4: Outreach Classify</td><td>Script on your Mac &mdash; <code>node scripts/classify-outreach.js</code></td></tr>
+    <tr><td>Stage 5: Contact Creators</td><td>Web app on your Mac &mdash; localhost:3000/outreach</td></tr>
+    <tr><td>Database</td><td>Supabase (cloud) &mdash; all stages read/write here</td></tr>
+    <tr><td>Video Storage</td><td>Supabase Storage (cloud) &mdash; reel videos stored permanently</td></tr>
+    <tr><td>n8n Phase 2 nodes</td><td><strong>Not used</strong> &mdash; replaced by Stage 3 script. Safe to deactivate or remove.</td></tr>
+  </table>
+</div>
+
+</body>
+</html>
