@@ -186,28 +186,64 @@ CRITICAL: You MUST respond with ONLY a JSON object. No text before or after. No 
 }
 
 function validateResponse(result) {
-  // Check for "no video" hallucination
-  const noVideoPatterns = ['no video provided', 'based on the caption', 'without video', 'cannot analyze video'];
+  const flags = [];
   const summary = (result.video_summary || '').toLowerCase();
   const audio = (result.audio_description || '').toLowerCase();
+  const quote = (result.speech_quote || '').trim();
 
+  // CHECK 1: "No video provided" hallucination (critical — marks invalid, triggers retry)
+  const noVideoPatterns = ['no video provided', 'based on the caption', 'without video', 'cannot analyze video'];
   for (const pattern of noVideoPatterns) {
     if (summary.includes(pattern) || audio.includes(pattern)) {
-      return { valid: false, reason: 'Gemini did not analyze actual video content' };
+      return {
+        valid: false,
+        reason: 'Gemini did not analyze actual video content',
+        flags: [{ code: 'NO_VIDEO_ANALYZED', severity: 'critical', message: 'Gemini claims no video was provided', auto_corrected: false }]
+      };
     }
   }
 
-  // Check for speech hallucination
+  // CHECK 2: Speech hallucination — claims talking but no audio evidence (auto-corrects)
   if (result.talks_in_videos === true) {
     const speechKeywords = ['speak', 'talk', 'voice', 'narrat', 'explain', 'say', 'comment'];
     const hasEvidence = speechKeywords.some(kw => audio.includes(kw));
     if (!hasEvidence) {
       result.talks_in_videos = false;
-      result.audio_description = `[CORRECTED: talks_in_videos overridden to false] ${result.audio_description}`;
+      result.audio_description = `[CORRECTED] ${result.audio_description}`;
+      flags.push({ code: 'SPEECH_NO_EVIDENCE', severity: 'high', message: 'Claims talking but audio description has no speech evidence — auto-corrected to false', auto_corrected: true });
     }
   }
 
-  return { valid: true };
+  // CHECK 3: Claims talking but no speech quote
+  if (result.talks_in_videos === true && (!quote || quote === 'N/A' || quote.length === 0)) {
+    flags.push({ code: 'SPEECH_NO_QUOTE', severity: 'high', message: 'Claims talking but speech quote is empty or N/A', auto_corrected: false });
+  }
+
+  // CHECK 4: Multiple speech videos but short/generic quote
+  if ((result.videos_with_speech || 0) >= 2 && quote.length > 0 && quote !== 'N/A' && quote.length < 10) {
+    flags.push({ code: 'MULTI_SPEECH_SHORT_QUOTE', severity: 'medium', message: 'Claims ' + result.videos_with_speech + ' videos with speech but quote is only ' + quote.length + ' chars', auto_corrected: false });
+  }
+
+  // CHECK 5: High UGC score but no speech (informational)
+  if ((result.overall_ugc_score || 0) > 7 && result.talks_in_videos === false) {
+    flags.push({ code: 'HIGH_SCORE_NO_SPEECH', severity: 'low', message: 'UGC score ' + result.overall_ugc_score + '/10 but creator does not talk in videos', auto_corrected: false });
+  }
+
+  // CHECK 6: English claim contradiction
+  if (result.speaks_english === true && result.talks_in_videos === true) {
+    const nonEnglishHints = ['spanish', 'french', 'portuguese', 'german', 'italian', 'japanese', 'korean', 'chinese', 'russian', 'arabic', 'hindi', 'foreign language', 'non-english'];
+    const hasContradiction = nonEnglishHints.some(hint => audio.includes(hint));
+    if (hasContradiction) {
+      flags.push({ code: 'ENGLISH_CONTRADICTION', severity: 'high', message: 'Claims English but audio description mentions non-English language', auto_corrected: false });
+    }
+  }
+
+  // CHECK 7: All scores zero (likely parse failure)
+  if (result.overall_ugc_score === 0 && result.voice_potential === 0 && result.teaching_potential === 0) {
+    flags.push({ code: 'ALL_ZEROS', severity: 'high', message: 'All scores are 0 — likely a parse failure', auto_corrected: false });
+  }
+
+  return { valid: true, flags };
 }
 
 async function analyzeProfile(profile) {
@@ -325,6 +361,7 @@ async function analyzeProfile(profile) {
         result,
         valid: validation.valid,
         validationReason: validation.reason,
+        flags: validation.flags || [],
         prompt,
         rawResponse: text,
         videosAnalyzed: fileUris.length
@@ -418,7 +455,8 @@ async function main() {
           next_steps: r.next_steps,
           audio_description: r.audio_description,
           speech_quote: r.speech_quote,
-          videos_with_speech: r.videos_with_speech
+          videos_with_speech: r.videos_with_speech,
+          audit_flags: result.flags
         })
         .eq('username', profile.username);
 
@@ -429,6 +467,10 @@ async function main() {
       }
 
       // Log to ai_logs
+      const auditStatus = result.flags.length === 0 ? 'CLEAN'
+        : result.flags.some(f => f.severity === 'critical' || f.severity === 'high') ? 'FLAGGED'
+        : 'WARNING';
+
       await supabase.from('ai_logs').insert({
         profile_username: profile.username,
         workflow_name: 'Gemini-Video-Analysis-Script',
@@ -438,13 +480,18 @@ async function main() {
         output_raw: result.rawResponse,
         output_parsed: r,
         tokens_used: 0,
-        prompt_version: PROMPT_VERSION
+        prompt_version: PROMPT_VERSION,
+        audit_status: auditStatus
       });
 
       analyzed++;
-      console.log(`  ${status} | Score: ${r.overall_ugc_score}/10 | Speaks: ${r.speaks_english} | ${r.recommendation}`);
+      const flagCount = result.flags.length;
+      console.log(`  ${status} | Score: ${r.overall_ugc_score}/10 | Speaks: ${r.speaks_english} | ${r.recommendation}${flagCount ? ' | ' + flagCount + ' flag(s)' : ''}`);
       if (!result.valid) {
         console.log(`  WARNING: ${result.validationReason}`);
+      }
+      for (const flag of result.flags) {
+        console.log(`    FLAG [${flag.severity}]: ${flag.message}${flag.auto_corrected ? ' (auto-corrected)' : ''}`);
       }
 
       // Delay between profiles to avoid rate limits

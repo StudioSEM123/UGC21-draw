@@ -70,6 +70,7 @@ app.get('/api/profiles', async (req, res) => {
   if (filter === 'denied') result = result.filter(p => p.review_decision === 'DENIED');
   if (filter === 'approved') result = result.filter(p => p.review_decision === 'APPROVED');
   if (filter === 'denied_teacher') result = result.filter(p => p.review_decision === 'DENIED' && (p.course_teacher_score || 0) >= 6);
+  if (filter === 'reject' || filter === 'pass') result = result.filter(p => p.review_decision !== 'APPROVED');
 
   res.json(result);
 });
@@ -106,6 +107,32 @@ app.post('/api/review', async (req, res) => {
     .from('profiles')
     .update(profileUpdate)
     .eq('username', profile_username);
+
+  res.json({ success: true });
+});
+
+app.post('/api/review/change', async (req, res) => {
+  const { profile_id, profile_username, decision, human_reasoning, profile_type } = req.body;
+
+  if (!profile_username || !decision) {
+    return res.status(400).json({ error: 'Missing profile_username or decision' });
+  }
+
+  // Update existing review row
+  const updateRow = { decision, human_reasoning: human_reasoning || '', reviewed_by: 'noras' };
+  if (profile_type) updateRow.profile_type = profile_type;
+
+  const { error: reviewError } = await supabase
+    .from('human_reviews')
+    .update(updateRow)
+    .eq('profile_username', profile_username);
+
+  if (reviewError) return res.status(500).json({ error: reviewError.message });
+
+  // Update profile type if approving
+  if (decision === 'APPROVED' && profile_type) {
+    await supabase.from('profiles').update({ profile_type }).eq('username', profile_username);
+  }
 
   res.json({ success: true });
 });
@@ -185,7 +212,7 @@ app.get('/api/outreach', async (req, res) => {
   const usernames = (outreach || []).map(o => o.profile_username);
   const { data: profiles } = await supabase
     .from('profiles')
-    .select('username, followers, engagement_rate, bio, profile_score, recommendation, overall_ugc_score, speaks_english, talks_in_videos, course_teacher_score, suggested_type, profile_type, reel_1_post_url, reel_2_post_url, reel_3_post_url, reel_1_caption, reel_2_caption, reel_3_caption')
+    .select('username, followers, engagement_rate, bio, profile_score, recommendation, overall_ugc_score, speaks_english, talks_in_videos, course_teacher_score, suggested_type, profile_type, audit_flags, reel_1_post_url, reel_2_post_url, reel_3_post_url, reel_1_caption, reel_2_caption, reel_3_caption')
     .in('username', usernames.length > 0 ? usernames : ['__none__']);
 
   const profileMap = {};
@@ -480,17 +507,6 @@ function renderReviewPage() {
     <div class="filter-sep"></div>
     <button data-filter="denied">My Denied <span class="count" id="count-denied"></span></button>
     <button data-filter="approved">My Approved <span class="count" id="count-approved"></span></button>
-    <button data-filter="denied_teacher">Denied+Teacher <span class="count" id="count-denied-teacher"></span></button>
-    <div class="filter-sep"></div>
-    <button class="active" data-type="all">All Types</button>
-    <button data-type="UGC_CREATOR">AI: UGC</button>
-    <button data-type="COURSE_TEACHER">AI: Teacher</button>
-    <button data-type="BOTH">AI: Both</button>
-    <span class="sort-label">Sort:</span>
-    <button class="active" data-sort="score">Score</button>
-    <button data-sort="followers">Followers</button>
-    <button data-sort="engagement">Engagement</button>
-    <button data-sort="teacher_score">Teacher</button>
   </div>
 
   <div class="container" id="profiles"></div>
@@ -662,7 +678,26 @@ function renderCard(p) {
 
   let geminiHtml = '';
   if (p.overall_ugc_score) {
+    // Audit flags banner
+    let auditBanner = '';
+    const flags = p.audit_flags || [];
+    if (flags.length > 0) {
+      const hasHigh = flags.some(function(f) { return f.severity === 'high' || f.severity === 'critical'; });
+      const bannerClass = hasHigh ? 'audit-banner-high' : 'audit-banner-warn';
+      const flagItems = flags.map(function(f) {
+        return '<div class="audit-flag">' +
+          '<span class="audit-severity audit-' + f.severity + '">' + f.severity.toUpperCase() + '</span> ' +
+          escapeHtml(f.message) +
+          (f.auto_corrected ? ' <span class="audit-corrected">auto-corrected</span>' : '') +
+        '</div>';
+      }).join('');
+      auditBanner = '<div class="audit-banner ' + bannerClass + '">' +
+        '<div class="audit-banner-title">&#9888; ' + flags.length + ' audit flag' + (flags.length > 1 ? 's' : '') + '</div>' +
+        flagItems + '</div>';
+    }
+
     geminiHtml = '<div class="section"><div class="section-label">Video Analysis (Gemini)</div>' +
+      auditBanner +
       '<div class="gemini-grid">' +
         '<div class="gemini-stat"><div class="value">' + p.overall_ugc_score + '</div><div class="label">UGC Score</div></div>' +
         '<div class="gemini-stat"><div class="value">' + (p.talks_in_videos ? 'Yes' : 'No') + '</div><div class="label">Talks</div></div>' +
@@ -672,6 +707,7 @@ function renderCard(p) {
         '<div class="gemini-stat"><div class="value">' + (p.brand_fit || '-') + '</div><div class="label">Brand Fit</div></div>' +
         '<div class="gemini-stat"><div class="value">' + (p.production_quality || '-') + '</div><div class="label">Production</div></div>' +
       '</div>' +
+      (p.audio_description ? '<div class="audio-desc">' + escapeHtml(p.audio_description) + '</div>' : '') +
       (p.video_recommendation ? '<div style="margin-top:8px;font-size:12px;color:#6e6e73">' + escapeHtml(p.video_recommendation) + '</div>' : '') +
     '</div>';
   }
@@ -679,9 +715,21 @@ function renderCard(p) {
   let actionsHtml = '';
   if (reviewed) {
     const isDenied = p.review_decision === 'DENIED';
+    const isApproved = p.review_decision === 'APPROVED';
+    const defaultType = p.profile_type || p.suggested_type || 'UGC_CREATOR';
     actionsHtml = '<div class="review-status ' + (isDenied ? 'denied-status' : 'approved-status') + '">' +
       '<span>' + (p.review_decision || 'Reviewed') + '</span>' +
-      (p.review_reasoning ? '<span class="reason"> — ' + escapeHtml(p.review_reasoning) + '</span>' : '') + '</div>';
+      (p.review_reasoning ? '<span class="reason"> — ' + escapeHtml(p.review_reasoning) + '</span>' : '') + '</div>' +
+      '<div class="type-selector" data-username="' + p.username + '" style="margin-top:8px">' +
+        '<button class="btn-type' + (defaultType === 'UGC_CREATOR' ? ' active' : '') + '" data-type-value="UGC_CREATOR" onclick="selectType(\\'' + p.username + '\\', \\'UGC_CREATOR\\')">UGC Creator</button>' +
+        '<button class="btn-type' + (defaultType === 'COURSE_TEACHER' ? ' active' : '') + '" data-type-value="COURSE_TEACHER" onclick="selectType(\\'' + p.username + '\\', \\'COURSE_TEACHER\\')">Course Teacher</button>' +
+        '<button class="btn-type' + (defaultType === 'BOTH' ? ' active' : '') + '" data-type-value="BOTH" onclick="selectType(\\'' + p.username + '\\', \\'BOTH\\')">Both</button>' +
+      '</div>' +
+      '<div class="card-actions" style="margin-top:6px">' +
+        '<textarea id="reason-' + p.username + '" placeholder="Reason for changing decision"></textarea>' +
+        (isDenied ? '<button class="btn btn-approve" onclick="changeReview(' + p.id + ', \\'' + p.username + '\\', \\'APPROVED\\')">Approve</button>' : '') +
+        (isApproved ? '<button class="btn btn-deny" onclick="changeReview(' + p.id + ', \\'' + p.username + '\\', \\'DENIED\\')">Deny</button>' : '') +
+      '</div>';
   } else {
     const defaultType = p.suggested_type || 'UGC_CREATOR';
     actionsHtml = '<div class="type-selector" data-username="' + p.username + '">' +
@@ -812,6 +860,27 @@ function undoReview(username) {
   if (wrapper) wrapper.outerHTML = pending.originalHtml;
   delete pendingReviews[username];
   showToast('Undone — @' + username, 'success');
+}
+
+async function changeReview(profileId, username, decision) {
+  const reasonEl = document.getElementById('reason-' + username);
+  const reason = reasonEl ? reasonEl.value : '';
+  const profileType = getSelectedType(username);
+  const card = document.getElementById('card-' + username);
+  if (!card) return;
+  try {
+    const res = await fetch('/api/review/change', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile_id: profileId, profile_username: username, decision, human_reasoning: reason, profile_type: profileType })
+    });
+    if (!res.ok) throw new Error('Failed');
+    card.style.display = 'none';
+    showToast('@' + username + ' changed to ' + decision.toLowerCase(), 'success');
+    loadStats();
+  } catch (e) {
+    showToast('Error changing review', 'error');
+  }
 }
 
 function showToast(message, type) {
@@ -951,16 +1020,18 @@ function renderOutreachPage() {
     <button data-filter="declined">Declined <span class="count" id="ocount-declined"></span></button>
     <button data-filter="no_response">No Response <span class="count" id="ocount-no_response"></span></button>
     <div class="filter-sep"></div>
-    <button class="active" data-otype="all">All Types</button>
-    <button data-otype="UGC_CREATOR">UGC</button>
-    <button data-otype="COURSE_TEACHER">Teacher</button>
-    <button data-otype="BOTH">Both</button>
-    <div class="filter-sep"></div>
-    <span class="sort-label">Sort:</span>
-    <button class="active" data-osort="tier">Tier</button>
-    <button data-osort="score">Score</button>
-    <button data-osort="followers">Followers</button>
-    <button data-osort="created">Created</button>
+    <select class="status-dropdown" id="otype-select" onchange="changeOType(this.value)">
+      <option value="all">All Types</option>
+      <option value="UGC_CREATOR">UGC</option>
+      <option value="COURSE_TEACHER">Teacher</option>
+      <option value="BOTH">Both</option>
+    </select>
+    <select class="status-dropdown" id="osort-select" onchange="changeOSort(this.value)">
+      <option value="tier">Sort: Tier</option>
+      <option value="score">Sort: Score</option>
+      <option value="followers">Sort: Followers</option>
+      <option value="created">Sort: Created</option>
+    </select>
   </div>
 
   <div class="container" id="outreach-list"></div>
@@ -1064,6 +1135,9 @@ function renderOutreach(items) {
 
 function filterBySearch() { renderOutreach(allOutreach); }
 
+function changeOType(val) { currentOType = val; loadOutreach(); }
+function changeOSort(val) { currentSort = val; loadOutreach(); }
+
 function escapeHtml(text) {
   if (!text) return '';
   const div = document.createElement('div');
@@ -1151,6 +1225,12 @@ function renderOutreachCard(o) {
   if (p.course_teacher_score) statsLine += ' &middot; Teacher ' + p.course_teacher_score + '/10';
   if (p.overall_ugc_score) statsLine += ' &middot; UGC ' + p.overall_ugc_score + '/10';
   if (p.speaks_english != null) statsLine += ' &middot; ' + (p.speaks_english ? 'English' : '<span class="lang-flag">Non-English</span>');
+  const oFlags = p.audit_flags || [];
+  if (oFlags.length > 0) {
+    const hasHighFlag = oFlags.some(function(f) { return f.severity === 'high' || f.severity === 'critical'; });
+    const flagList = oFlags.map(function(f) { return f.severity.toUpperCase() + ': ' + f.message; }).join('&#10;');
+    statsLine += ' &middot; <span class="audit-pill ' + (hasHighFlag ? 'audit-pill-high' : 'audit-pill-warn') + '" title="' + escapeAttr(flagList) + '">&#9888; ' + oFlags.length + ' flag' + (oFlags.length > 1 ? 's' : '') + '</span>';
+  }
   leftHtml += '<div class="o-section o-stats">' + statsLine + '</div>';
 
   // Contact timeline (only if contacted)
