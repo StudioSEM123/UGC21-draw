@@ -1,12 +1,84 @@
 const express = require('express');
+const session = require('express-session');
 const { createClient } = require('@supabase/supabase-js');
 const nodemailer = require('nodemailer');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+require('dotenv').config(); // also check local .env (for Docker)
 
 const app = express();
+app.set('trust proxy', 1); // trust first proxy (Traefik)
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use('/public', express.static(path.join(__dirname, 'public')));
+
+app.get('/favicon.ico', (req, res) => res.status(204).end());
+
+// ══════════════════════════════════════════════════════════════════════════
+// AUTH
+// ══════════════════════════════════════════════════════════════════════════
+
+const APP_PASSWORD = process.env.APP_PASSWORD || 'review2024';
+
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'ugc-finder-session-secret-change-me',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax'
+  }
+}));
+
+app.get('/login', (req, res) => {
+  if (req.session.authenticated) return res.redirect('/');
+  const error = req.query.error ? '<p style="color:#e74c3c;margin-bottom:16px">Wrong password</p>' : '';
+  res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Login — 21Draw UGC</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0f1117;color:#e0e0e0;display:flex;align-items:center;justify-content:center;min-height:100vh}
+  .card{background:#1a1d27;border:1px solid #2a2d3a;border-radius:12px;padding:40px;width:360px;text-align:center}
+  h1{font-size:20px;margin-bottom:8px;color:#fff}
+  .sub{color:#888;font-size:13px;margin-bottom:24px}
+  input[type=password]{width:100%;padding:12px 16px;background:#0f1117;border:1px solid #2a2d3a;border-radius:8px;color:#fff;font-size:15px;margin-bottom:16px;outline:none}
+  input[type=password]:focus{border-color:#6c5ce7}
+  button{width:100%;padding:12px;background:#6c5ce7;color:#fff;border:none;border-radius:8px;font-size:15px;cursor:pointer;font-weight:600}
+  button:hover{background:#5a4bd1}
+</style></head><body>
+<div class="card">
+  <h1>21Draw UGC Finder</h1>
+  <p class="sub">Enter password to continue</p>
+  ${error}
+  <form method="POST" action="/login">
+    <input type="password" name="password" placeholder="Password" autofocus>
+    <button type="submit">Log in</button>
+  </form>
+</div></body></html>`);
+});
+
+app.post('/login', (req, res) => {
+  if (req.body.password === APP_PASSWORD) {
+    req.session.authenticated = true;
+    return res.redirect(req.session.returnTo || '/');
+  }
+  res.redirect('/login?error=1');
+});
+
+app.get('/logout', (req, res) => {
+  req.session.destroy(() => res.redirect('/login'));
+});
+
+// Protect all routes except /login
+app.use((req, res, next) => {
+  if (req.path === '/login') return next();
+  if (!req.session.authenticated) {
+    req.session.returnTo = req.originalUrl;
+    return res.redirect('/login');
+  }
+  next();
+});
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -1637,8 +1709,8 @@ loadOutreach();
 </html>`;
 }
 
-const PORT = 3000;
-app.listen(PORT, () => {
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => {
   console.log('Review UI running at http://localhost:' + PORT);
   console.log('Outreach UI at http://localhost:' + PORT + '/outreach');
 });
