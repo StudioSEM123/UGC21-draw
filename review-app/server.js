@@ -1,10 +1,10 @@
 const express = require('express');
 const session = require('express-session');
 const { createClient } = require('@supabase/supabase-js');
-const nodemailer = require('nodemailer');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 require('dotenv').config(); // also check local .env (for Docker)
+const { generateFollowUp } = require('../scripts/lib/classify');
 
 const app = express();
 app.set('trust proxy', 1); // trust first proxy (Traefik)
@@ -85,14 +85,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// Email transporter (Gmail for testing)
-let emailTransporter = null;
-if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
-  emailTransporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD }
-  });
-}
 
 // ══════════════════════════════════════════════════════════════════════════
 // REVIEW API
@@ -266,11 +258,7 @@ app.get('/api/outreach', async (req, res) => {
   }
 
   if (filter !== 'all') {
-    if (filter === 'follow_up') {
-      query = query.in('status', ['FOLLOW_UP_1', 'FOLLOW_UP_2']);
-    } else {
-      query = query.eq('status', filter.toUpperCase());
-    }
+    query = query.eq('status', filter.toUpperCase());
   }
 
   if (type !== 'all') {
@@ -301,53 +289,90 @@ app.get('/api/outreach', async (req, res) => {
 app.get('/api/outreach/stats', async (req, res) => {
   const { data } = await supabase.from('outreach').select('status, priority_tier');
 
-  const stats = { total: 0, queued: 0, contacted: 0, follow_up: 0, replied: 0, negotiating: 0, confirmed: 0, declined: 0, no_response: 0 };
+  const stats = { total: 0, queued: 0, contacted: 0, replied: 0, negotiating: 0, confirmed: 0, declined: 0, no_response: 0 };
   const tiers = { TIER_1: 0, TIER_2: 0, TIER_3: 0 };
 
   (data || []).forEach(o => {
     stats.total++;
-    const key = o.status.toLowerCase().replace(/_\d+$/, '').replace('_', '_');
-    if (o.status === 'FOLLOW_UP_1' || o.status === 'FOLLOW_UP_2') stats.follow_up++;
-    else if (stats[o.status.toLowerCase()] !== undefined) stats[o.status.toLowerCase()]++;
+    if (stats[o.status.toLowerCase()] !== undefined) stats[o.status.toLowerCase()]++;
     if (tiers[o.priority_tier] !== undefined) tiers[o.priority_tier]++;
   });
 
   res.json({ ...stats, tiers });
 });
 
-app.post('/api/outreach/send-email', async (req, res) => {
-  const { profile_username, subject, body, to_email } = req.body;
+app.post('/api/outreach/mark-emailed', async (req, res) => {
+  const { profile_username } = req.body;
+  if (!profile_username) return res.status(400).json({ error: 'Missing profile_username' });
 
-  if (!profile_username || !subject || !body || !to_email) {
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
+  const { error } = await supabase
+    .from('outreach')
+    .update({
+      status: 'CONTACTED',
+      contacted_at: new Date().toISOString()
+    })
+    .eq('profile_username', profile_username);
 
-  if (!emailTransporter) {
-    return res.status(500).json({ error: 'Email not configured. Set GMAIL_USER and GMAIL_APP_PASSWORD in .env' });
-  }
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+app.post('/api/outreach/generate-follow-up', async (req, res) => {
+  const { profile_username } = req.body;
+  if (!profile_username) return res.status(400).json({ error: 'Missing profile_username' });
 
   try {
-    await emailTransporter.sendMail({
-      from: process.env.GMAIL_USER,
-      to: to_email,
-      subject,
-      text: body
-    });
-
-    await supabase
+    const { data: outreachRecord } = await supabase
       .from('outreach')
-      .update({
-        status: 'CONTACTED',
-        contacted_at: new Date().toISOString(),
-        email_subject: subject,
-        email_body: body
-      })
-      .eq('profile_username', profile_username);
+      .select('*')
+      .eq('profile_username', profile_username)
+      .single();
 
-    res.json({ success: true });
+    if (!outreachRecord) return res.status(404).json({ error: 'Outreach record not found' });
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('username', profile_username)
+      .single();
+
+    if (!profile) return res.status(404).json({ error: 'Profile not found' });
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' });
+
+    const result = await generateFollowUp(supabase, profile, outreachRecord, apiKey);
+    res.json({ follow_up_message: result.follow_up_message });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+app.post('/api/outreach/send-follow-up', async (req, res) => {
+  const { profile_username, message } = req.body;
+  if (!profile_username || !message) return res.status(400).json({ error: 'Missing fields' });
+
+  const { data: record } = await supabase
+    .from('outreach')
+    .select('follow_up_count, follow_up_messages')
+    .eq('profile_username', profile_username)
+    .single();
+
+  const existingMessages = record?.follow_up_messages || [];
+  existingMessages.push({ message, sent_at: new Date().toISOString() });
+
+  const { error } = await supabase
+    .from('outreach')
+    .update({
+      follow_up_count: (record?.follow_up_count || 0) + 1,
+      last_follow_up_at: new Date().toISOString(),
+      follow_up_messages: existingMessages,
+      message_sent: message
+    })
+    .eq('profile_username', profile_username);
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
 });
 
 app.post('/api/outreach/mark-contacted', async (req, res) => {
@@ -380,13 +405,12 @@ app.post('/api/outreach/update-status', async (req, res) => {
   const update = { status };
   if (status === 'QUEUED') {
     update.contacted_at = null;
-    update.follow_up_1_at = null;
-    update.follow_up_2_at = null;
     update.replied_at = null;
+    update.follow_up_count = 0;
+    update.last_follow_up_at = null;
+    update.follow_up_messages = [];
   }
   if (status === 'CONTACTED') update.contacted_at = new Date().toISOString();
-  if (status === 'FOLLOW_UP_1') update.follow_up_1_at = new Date().toISOString();
-  if (status === 'FOLLOW_UP_2') update.follow_up_2_at = new Date().toISOString();
   if (status === 'REPLIED') update.replied_at = new Date().toISOString();
   if (notes) update.notes = notes;
 
@@ -822,7 +846,7 @@ function renderCard(p) {
       '<div class="meta">' +
         '<span class="meta-pill highlight">' + formatNumber(p.followers) + ' followers</span>' +
         '<span class="meta-pill">' + (p.engagement_rate || 0) + '% eng</span>' +
-        '<span class="meta-pill">' + (p.source || '?') + '</span>' +
+        '<span class="meta-pill" title="Discovery: ' + (p.source_type || 'tagged') + '">' + (p.source || '?') + ' (' + (p.source_type || 'tagged') + ')</span>' +
         '<span class="meta-pill">' + (p.total_reels_found || 0) + ' reels</span>' +
       '</div></div>' +
       '<div class="score-badges">' +
@@ -1083,7 +1107,6 @@ function renderOutreachPage() {
     <button class="active" data-filter="all">All <span class="count" id="count-all"></span></button>
     <button data-filter="queued">Queued <span class="count" id="ocount-queued"></span></button>
     <button data-filter="contacted">Contacted <span class="count" id="ocount-contacted"></span></button>
-    <button data-filter="follow_up">Follow-up <span class="count" id="ocount-follow_up"></span></button>
     <div class="filter-sep"></div>
     <button data-filter="replied">Replied <span class="count" id="ocount-replied"></span></button>
     <button data-filter="negotiating">Negotiating <span class="count" id="ocount-negotiating"></span></button>
@@ -1109,31 +1132,10 @@ function renderOutreachPage() {
   <div class="container" id="outreach-list"></div>
   <div class="toast" id="toast"></div>
 
-  <!-- Email Preview Modal -->
-  <div class="modal-overlay" id="email-modal" style="display:none">
-    <div class="modal">
-      <div class="modal-header">
-        <h3>Send Email to <span id="modal-username"></span></h3>
-        <button class="modal-close" onclick="closeEmailModal()">&times;</button>
-      </div>
-      <div class="modal-body">
-        <label>To:</label>
-        <input type="email" id="modal-to" class="modal-input" readonly>
-        <label>Subject:</label>
-        <input type="text" id="modal-subject" class="modal-input">
-        <label>Body:</label>
-        <textarea id="modal-body-text" class="modal-textarea"></textarea>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-status" onclick="closeEmailModal()">Cancel</button>
-        <button class="btn btn-email" onclick="confirmSendEmail()">Send Email</button>
-      </div>
-    </div>
-  </div>
-
   <div class="kb-legend">
-    <div class="kb"><kbd>E</kbd> Send Email</div>
+    <div class="kb"><kbd>E</kbd> Open Email</div>
     <div class="kb"><kbd>C</kbd> Copy + Open DM</div>
+    <div class="kb"><kbd>F</kbd> Send Follow-up</div>
     <div class="kb"><kbd>J</kbd> Next</div>
     <div class="kb"><kbd>K</kbd> Prev</div>
   </div>
@@ -1145,17 +1147,16 @@ let currentSort = 'tier';
 let allOutreach = [];
 let focusedIndex = 0;
 let saveTimers = {};
-let emailModalUsername = '';
 
 async function loadStats() {
   const res = await fetch('/api/outreach/stats');
   const s = await res.json();
   // Dashboard funnel
   document.getElementById('dash-total').textContent = s.total;
-  document.getElementById('dash-contacted').textContent = s.contacted + s.follow_up;
+  document.getElementById('dash-contacted').textContent = s.contacted;
   document.getElementById('dash-replied').textContent = s.replied + s.negotiating;
   document.getElementById('dash-confirmed').textContent = s.confirmed;
-  const contacted = s.contacted + s.follow_up + s.replied + s.negotiating + s.confirmed + s.declined + s.no_response;
+  const contacted = s.contacted + s.replied + s.negotiating + s.confirmed + s.declined + s.no_response;
   const replyRate = contacted > 0 ? Math.round(((s.replied + s.negotiating + s.confirmed) / contacted) * 100) : 0;
   document.getElementById('dash-rate').textContent = contacted > 0 ? 'Reply rate: ' + replyRate + '%' : '';
   document.getElementById('dash-t1').textContent = s.tiers.TIER_1;
@@ -1165,7 +1166,6 @@ async function loadStats() {
   setText('count-all', s.total);
   setText('ocount-queued', s.queued);
   setText('ocount-contacted', s.contacted);
-  setText('ocount-follow_up', s.follow_up);
   setText('ocount-replied', s.replied);
   setText('ocount-negotiating', s.negotiating);
   setText('ocount-confirmed', s.confirmed);
@@ -1252,15 +1252,16 @@ function renderOutreachCard(o) {
   const igUrl = 'https://www.instagram.com/' + o.profile_username + '/';
   const tierClass = o.priority_tier === 'TIER_1' ? 'tier-1' : o.priority_tier === 'TIER_3' ? 'tier-3' : 'tier-2';
   const tierBorderClass = o.priority_tier === 'TIER_1' ? 'card-tier-1' : o.priority_tier === 'TIER_3' ? 'card-tier-3' : 'card-tier-2';
-  const days = daysSince(o.contacted_at);
+  const lastContact = o.last_follow_up_at || o.contacted_at;
+  const days = daysSince(lastContact);
+  const daysSinceFirstContact = daysSince(o.contacted_at);
   const needsFollowUp = o.status === 'CONTACTED' && days !== null && days >= 7;
 
   const statusLabels = {
-    'QUEUED': 'Queued', 'CONTACTED': 'Contacted', 'FOLLOW_UP_1': 'Follow-up 1',
-    'FOLLOW_UP_2': 'Follow-up 2', 'REPLIED': 'Replied', 'NEGOTIATING': 'Negotiating',
+    'QUEUED': 'Queued', 'CONTACTED': 'Contacted', 'REPLIED': 'Replied', 'NEGOTIATING': 'Negotiating',
     'CONFIRMED': 'Confirmed', 'DECLINED': 'Declined', 'NO_RESPONSE': 'No Response'
   };
-  const allStatuses = ['QUEUED', 'CONTACTED', 'FOLLOW_UP_1', 'FOLLOW_UP_2', 'REPLIED', 'NEGOTIATING', 'CONFIRMED', 'DECLINED', 'NO_RESPONSE'];
+  const allStatuses = ['QUEUED', 'CONTACTED', 'REPLIED', 'NEGOTIATING', 'CONFIRMED', 'DECLINED', 'NO_RESPONSE'];
 
   const statusDropdown = '<select class="status-dropdown" onchange="changeStatus(\\'' + o.profile_username + '\\', this.value)">' +
     allStatuses.map(s => '<option value="' + s + '"' + (s === o.status ? ' selected' : '') + '>' + (statusLabels[s] || s) + '</option>').join('') + '</select>';
@@ -1308,8 +1309,11 @@ function renderOutreachCard(o) {
   // Contact timeline (only if contacted)
   const timelineEvents = [];
   if (o.contacted_at) timelineEvents.push({ label: 'Contacted', date: o.contacted_at });
-  if (o.follow_up_1_at) timelineEvents.push({ label: 'Follow-up 1', date: o.follow_up_1_at });
-  if (o.follow_up_2_at) timelineEvents.push({ label: 'Follow-up 2', date: o.follow_up_2_at });
+  if (o.follow_up_messages && o.follow_up_messages.length > 0) {
+    o.follow_up_messages.forEach(function(fu, i) {
+      timelineEvents.push({ label: 'Follow-up ' + (i + 1), date: fu.sent_at });
+    });
+  }
   if (o.replied_at) timelineEvents.push({ label: 'Replied', date: o.replied_at });
   if (timelineEvents.length > 0) {
     leftHtml += '<div class="contact-timeline">' +
@@ -1324,7 +1328,7 @@ function renderOutreachCard(o) {
   // -- RIGHT PANEL: Messages --
   let rightHtml = '';
   const hasTeacherMsg = o.teacher_dm_message;
-  const isEditable = o.status === 'QUEUED' || o.status === 'CONTACTED' || o.status === 'FOLLOW_UP_1' || o.status === 'FOLLOW_UP_2';
+  const isEditable = o.status === 'QUEUED' || o.status === 'CONTACTED';
 
   let tabs = ['dm'];
   if (o.email_subject || o.email_body || o.contact_email) tabs.push('email');
@@ -1423,8 +1427,10 @@ function renderOutreachCard(o) {
   // Status info
   let statusInfoHtml = '';
   if (o.status !== 'QUEUED') {
+    const followUpCount = o.follow_up_count || 0;
     statusInfoHtml = '<div class="outreach-status-bar">' +
-      (days !== null ? '<span class="days-ago">' + days + 'd since contact</span>' : '') +
+      (daysSinceFirstContact !== null ? '<span class="days-ago">' + daysSinceFirstContact + 'd since contact</span>' : '') +
+      (followUpCount > 0 ? '<span class="days-ago">' + followUpCount + ' follow-up' + (followUpCount > 1 ? 's' : '') + ' sent</span>' : '') +
       (needsFollowUp ? '<span class="follow-up-badge">Needs follow-up</span>' : '') +
     '</div>';
   }
@@ -1433,7 +1439,8 @@ function renderOutreachCard(o) {
   let actionBtns = '<div class="outreach-action-bar">' +
     '<div class="action-left">' +
       '<button class="btn btn-dm" onclick="copyAndOpenDM(\\'' + o.profile_username + '\\')">Copy + Open DM</button>' +
-      (o.contact_email ? '<button class="btn btn-email" onclick="openEmailModal(\\'' + o.profile_username + '\\')">Send Email</button>' : '') +
+      (o.contact_email ? '<button class="btn btn-email" onclick="openEmail(\\'' + o.profile_username + '\\')">Open Email</button>' : '') +
+      (o.status === 'CONTACTED' ? '<button class="btn btn-follow-up" onclick="sendFollowUp(\\'' + o.profile_username + '\\')">Send Follow-up</button>' : '') +
       '<button class="btn btn-status" onclick="toggleReplyForm(\\'' + o.profile_username + '\\')">Log Reply</button>' +
     '</div>' +
     '<button class="btn btn-reclassify" onclick="reclassify(\\'' + o.profile_username + '\\')">Re-classify</button>' +
@@ -1525,6 +1532,17 @@ async function copyAndOpenDM(username) {
     showToast('Message copied! Opening DM...', 'success');
   }
   window.open('https://ig.me/m/' + username, '_blank');
+
+  // Auto-mark as CONTACTED if currently QUEUED
+  if (record && record.status === 'QUEUED') {
+    await fetch('/api/outreach/mark-contacted', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile_username: username, message: msg })
+    });
+    loadOutreach();
+    loadStats();
+  }
 }
 
 // -- Status change --
@@ -1557,43 +1575,58 @@ function formatDate(dateStr) {
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
-// -- Email modal --
-function openEmailModal(username) {
+// -- Open Email (mailto) --
+async function openEmail(username) {
   const record = allOutreach.find(o => o.profile_username === username);
-  if (!record) return;
-  emailModalUsername = username;
-  document.getElementById('modal-username').textContent = '@' + username;
-  document.getElementById('modal-to').value = record.contact_email || '';
-  document.getElementById('modal-subject').value = record.email_subject || '';
-  document.getElementById('modal-body-text').value = (record.email_body || '').replace(/\\\\n/g, '\\n');
-  document.getElementById('email-modal').style.display = 'flex';
-}
+  if (!record || !record.contact_email) return;
+  const subject = encodeURIComponent(record.email_subject || '');
+  const body = encodeURIComponent((record.email_body || '').replace(/\\\\n/g, '\\n'));
+  window.open('mailto:' + record.contact_email + '?subject=' + subject + '&body=' + body, '_self');
+  showToast('Opening email client...', 'success');
 
-function closeEmailModal() {
-  document.getElementById('email-modal').style.display = 'none';
-  emailModalUsername = '';
-}
-
-async function confirmSendEmail() {
-  const to = document.getElementById('modal-to').value;
-  const subject = document.getElementById('modal-subject').value;
-  const body = document.getElementById('modal-body-text').value;
-  if (!to || !subject || !body) { showToast('Fill all fields', 'error'); return; }
-
-  try {
-    const res = await fetch('/api/outreach/send-email', {
+  // Auto-mark as CONTACTED if currently QUEUED
+  if (record.status === 'QUEUED') {
+    await fetch('/api/outreach/mark-emailed', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile_username: emailModalUsername, subject, body, to_email: to })
+      body: JSON.stringify({ profile_username: username })
+    });
+    loadOutreach();
+    loadStats();
+  }
+}
+
+// -- Send Follow-up --
+async function sendFollowUp(username) {
+  showToast('Generating follow-up message...', 'success');
+  try {
+    const res = await fetch('/api/outreach/generate-follow-up', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile_username: username })
     });
     const data = await res.json();
-    if (data.error) { showToast('Email error: ' + data.error, 'error'); return; }
-    showToast('Email sent to ' + to, 'success');
-    closeEmailModal();
+    if (data.error) { showToast('Error: ' + data.error, 'error'); return; }
+
+    // Show the generated message in the DM textarea
+    const msgEl = document.getElementById('msg-' + username);
+    if (msgEl) {
+      msgEl.value = data.follow_up_message;
+      msgEl.style.borderColor = '#ff9f0a';
+      setTimeout(() => { msgEl.style.borderColor = ''; }, 3000);
+    }
+    showToast('Follow-up generated! Review it, then click Copy + Open DM.', 'success');
+
+    // Save the follow-up to DB
+    await fetch('/api/outreach/send-follow-up', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile_username: username, message: data.follow_up_message })
+    });
     loadOutreach();
     loadStats();
   } catch(e) {
-    showToast('Failed to send email', 'error');
+    showToast('Failed to generate follow-up', 'error');
   }
 }
 
@@ -1671,6 +1704,11 @@ document.addEventListener('keydown', (e) => {
     const card = cards[focusedIndex];
     if (card) { const btn = card.querySelector('.btn-dm'); if (btn) btn.click(); }
   }
+  if (key === 'f') {
+    e.preventDefault();
+    const card = cards[focusedIndex];
+    if (card) { const btn = card.querySelector('.btn-follow-up'); if (btn) btn.click(); }
+  }
 });
 
 document.querySelector('.filters').addEventListener('click', (e) => {
@@ -1695,11 +1733,6 @@ document.querySelector('.filters').addEventListener('click', (e) => {
     currentSort = btn.dataset.osort;
     loadOutreach();
   }
-});
-
-// Close modal on overlay click
-document.getElementById('email-modal').addEventListener('click', (e) => {
-  if (e.target === e.currentTarget) closeEmailModal();
 });
 
 loadStats();

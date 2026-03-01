@@ -3,3 +3,6 @@
 node_modules/
 .DS_Store
 scripts/data/
+
+# n8n workflow JSONs contain hardcoded Supabase keys — deploy to VPS directly
+workflows/*.json

@@ -7,7 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const WORKFLOW_PATH = path.join(__dirname, '..', 'workflows', 'n8n UGC latest (8).json');
+const WORKFLOW_PATH = path.join(__dirname, '..', 'workflows', 'n8n UGC latest (added on 25th feb).json');
 const CODE_DIR = path.join(__dirname, '..', '21draw-ugc-pipeline', 'code-nodes');
 
 // Mapping: workflow node name -> JS file path
@@ -18,6 +18,9 @@ const NODE_FILE_MAP = {
   'Save DB': path.join(CODE_DIR, 'phase1', 'save-to-db.js'),
   'Pre-Filter Known Profiles': path.join(CODE_DIR, 'phase1', 'pre-filter-known-profiles.js'),
   'Save Seen (No Reels)': path.join(CODE_DIR, 'phase1', 'save-to-seen-profiles.js'),
+  'Extract Profiles1': path.join(CODE_DIR, 'phase1', 'extract-profiles.js'),
+  'Settings Following': path.join(CODE_DIR, 'phase1', 'settings-following.js'),
+  'Extract Following Profiles': path.join(CODE_DIR, 'phase1', 'extract-following-profiles.js'),
   'Handle Skipped Profile': path.join(CODE_DIR, 'phase2', 'handle-skipped-profile.js'),
   'Parse Gemini Response': path.join(CODE_DIR, 'phase2', 'parse-gemini-response.js'),
   'Code in JavaScript': path.join(CODE_DIR, 'phase2', 'build-gemini-request.js'),
